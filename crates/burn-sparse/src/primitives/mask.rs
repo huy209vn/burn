@@ -59,7 +59,7 @@ impl<B: Backend> SparseMask<B> {
     /// Binary mask keeping the top (1-sparsity) weights
     pub fn from_scores(scores: &Tensor<B, 2>, sparsity: f32) -> Self {
         let threshold = percentile(scores, sparsity * 100.0);
-        let mask = scores.clone().greater_elem(threshold);
+        let mask = scores.clone().greater_equal_elem(threshold);
         Self::from_tensor(mask)
     }
 

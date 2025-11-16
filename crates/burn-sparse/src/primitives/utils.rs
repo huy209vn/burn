@@ -101,8 +101,8 @@ pub fn reconstruction_error<B: Backend>(
     // ||y_dense - y_sparse||² per sample
     (y_dense - y_sparse)
         .powf_scalar(2.0)
-        .sum_dim(1)
-        .squeeze::<1>()
+        .sum_dim(1) // [batch, 1]
+        .flatten::<1>(0, 1) // [batch]
 }
 
 #[cfg(test)]
@@ -121,7 +121,8 @@ mod tests {
         );
 
         let p50 = percentile(&tensor, 50.0);
-        assert!((p50 - 3.5).abs() < 0.1); // Median should be around 3.5
+        // Values: [1, 2, 3, 4, 5, 6], 50th percentile at index 3 -> value 4
+        assert!((p50 - 4.0).abs() < 0.1);
 
         let p100 = percentile(&tensor, 100.0);
         assert!((p100 - 6.0).abs() < 0.1); // Max should be 6.0

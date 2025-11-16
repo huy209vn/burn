@@ -11,7 +11,7 @@
 //! cargo run --example pruning_cycle
 //! ```
 
-use burn::tensor::{backend::Backend, Distribution, Shape, Tensor};
+use burn_core::tensor::{backend::Backend, Distribution, Shape, Tensor};
 use burn_ndarray::NdArray;
 use burn_sparse::prelude::*;
 
@@ -72,16 +72,13 @@ fn main() {
 
     let dsnot_config = DSnoTConfig {
         max_iters: 20,
-        update_threshold: 0.01,
-        alpha: 1.0,
         tolerance: 1e-5,
-        lambda: 1e-8,
+        n_calibration: 64,
     };
 
     let mut dsnot = DSnoT::new(dsnot_config);
     let dsnot_mask = dsnot.refine(&weights, &wanda_mask, &calibration);
 
-    println!("DSnoT iterations: {}", dsnot.error_history().len());
     println!("DSnoT mask sparsity: {:.2}%", dsnot_mask.actual_sparsity() * 100.0);
 
     // Compute DSnoT reconstruction error
@@ -101,13 +98,7 @@ fn main() {
         println!("Change:       {:.2}%", improvement);
     }
 
-    // 6. Show error history
-    println!("\n--- DSnoT Error History ---");
-    for (i, &err) in dsnot.error_history().iter().enumerate() {
-        println!("Iteration {}: {:.6}", i, err);
-    }
-
-    // 7. Compute Hamming distance
+    // 6. Compute Hamming distance
     let hamming = wanda_mask.hamming_distance(&dsnot_mask);
     let n_swapped = hamming / 2; // Each swap creates 2 differences
     println!("\n--- Mask Changes ---");
@@ -127,11 +118,13 @@ fn compute_error(
     let mut n_samples = 0;
 
     for sample in calibration.iter() {
-        let y_dense = dense.matmul(sample.clone().unsqueeze_dim(1)).squeeze(1);
-        let y_sparse = sparse.matmul(sample.clone().unsqueeze_dim(1)).squeeze(1);
+        let y_dense = dense.clone().matmul(sample.clone().unsqueeze_dim(1)).squeeze::<1>();
+        let y_sparse = sparse.clone().matmul(sample.clone().unsqueeze_dim(1)).squeeze::<1>();
 
         let error = (y_dense - y_sparse).powf_scalar(2.0).sum();
-        total_error += error.into_scalar();
+
+        use burn_core::tensor::ElementConversion;
+        total_error += error.into_scalar().elem::<f32>();
         n_samples += 1;
     }
 

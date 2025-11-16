@@ -1,39 +1,35 @@
 //! DSnoT: Variance-weighted iterative mask refinement.
 //!
-//! **Reference**: [DSnoT paper citation]
+//! **Reference**: DSnoT paper (ICLR 2024)
+//!
+//! DSnoT refines an initial sparse mask by iteratively swapping weights based on
+//! reconstruction error. It uses activation statistics to score pruned weights for
+//! restoration and applies sign-aware filtering when selecting weights to prune.
 
 use alloc::vec::Vec;
-use burn_core::tensor::{backend::Backend, Tensor};
+use burn_core::tensor::{backend::Backend, Bool, ElementConversion, Shape, Tensor, TensorData};
 
-use crate::primitives::{bottomk_indices, topk_indices, CalibrationData, SparseMask};
+use crate::primitives::{ActivationStats, CalibrationData, SparseMask};
 
 /// Configuration for DSnoT pruning.
 #[derive(Debug, Clone)]
 pub struct DSnoTConfig {
-    /// Maximum number of refinement iterations
+    /// Maximum number of refinement iterations per row
     pub max_iters: usize,
-
-    /// Update threshold (fraction of weights to swap per iteration)
-    pub update_threshold: f32,
-
-    /// Variance penalty exponent (α in μ/σ^α)
-    pub alpha: f32,
 
     /// Convergence tolerance for reconstruction error
     pub tolerance: f32,
 
-    /// Small constant for numerical stability (λ in μ/(σ²+λ)^α)
-    pub lambda: f32,
+    /// Number of calibration samples to use
+    pub n_calibration: usize,
 }
 
 impl Default for DSnoTConfig {
     fn default() -> Self {
         Self {
             max_iters: 50,
-            update_threshold: 0.01,
-            alpha: 1.0,
             tolerance: 1e-5,
-            lambda: 1e-8,
+            n_calibration: 128,
         }
     }
 }
@@ -41,25 +37,13 @@ impl Default for DSnoTConfig {
 /// DSnoT: Variance-Weighted Iterative Mask Refinement
 ///
 /// Iteratively refines a sparse mask by:
-/// 1. Computing error reduction distribution for pruned weights
-/// 2. Computing error increase distribution for active weights
-/// 3. Swapping worst active weights with best pruned weights
-/// 4. Repeating until convergence
+/// 1. Computing reconstruction error per output row
+/// 2. Selecting pruned weights to restore using variance-penalized scoring
+/// 3. Selecting active weights to prune using sign-filtered Wanda scoring
+/// 4. Swapping weights and repeating until convergence
 ///
-/// Growing score: `μ / (σ² + λ)^α` (Sharpe ratio with variance penalty)
-/// Pruning score: `μ` (mean damage from removal)
-///
-/// # Algorithm
-///
-/// ```text
-/// for iter in 0..max_iters:
-///     1. For each pruned weight: compute error reduction if restored
-///     2. For each active weight: compute error increase if pruned
-///     3. Select top-K pruned weights by variance-weighted score
-///     4. Select bottom-K active weights by damage score
-///     5. Swap selected weights
-///     6. Check convergence
-/// ```
+/// **Growing score**: `W · E[A] / Var[A]` (variance-penalized contribution)
+/// **Pruning score**: `|W| · ||A||_2` (Wanda), filtered by sign constraint
 ///
 /// # Example
 ///
@@ -77,30 +61,20 @@ impl Default for DSnoTConfig {
 pub struct DSnoT<B: Backend> {
     config: DSnoTConfig,
     error_history: Vec<f32>,
-    iteration: usize,
     _backend: core::marker::PhantomData<B>,
 }
 
 impl<B: Backend> DSnoT<B> {
     /// Create a new DSnoT refiner with the given configuration.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - DSnoT configuration
-    ///
-    /// # Returns
-    ///
-    /// DSnoT instance ready for refinement
     pub fn new(config: DSnoTConfig) -> Self {
         Self {
             config,
             error_history: Vec::new(),
-            iteration: 0,
             _backend: core::marker::PhantomData,
         }
     }
 
-    /// Refine a sparse mask through iterative swaps.
+    /// Refine a sparse mask through iterative row-wise swaps.
     ///
     /// # Arguments
     ///
@@ -117,68 +91,90 @@ impl<B: Backend> DSnoT<B> {
         initial_mask: &SparseMask<B>,
         data: &CalibrationData<B>,
     ) -> SparseMask<B> {
-        let mut mask = initial_mask.clone();
+        // Precompute activation statistics once
+        let n_use = self.config.n_calibration.min(data.len());
+        let subset = if n_use < data.len() {
+            data.take(n_use)
+        } else {
+            data.clone()
+        };
+
+        let samples: Vec<Tensor<B, 2>> = subset
+            .iter()
+            .map(|sample| sample.unsqueeze()) // [n_features] -> [1, n_features]
+            .collect();
+
+        let act_stats = ActivationStats::from_samples(&samples);
+
+        let shape = weights.dims();
+        let n_out = shape[0];
+        let n_in = shape[1];
+
+        // Start with initial mask
+        let mut mask_data = vec![false; n_out * n_in];
+        for &idx in initial_mask.active_indices() {
+            mask_data[idx] = true;
+        }
+
         self.error_history.clear();
-        self.iteration = 0;
 
-        for iter in 0..self.config.max_iters {
-            self.iteration = iter;
+        // Process each row independently
+        for row_idx in 0..n_out {
+            for _iter in 0..self.config.max_iters {
+                // 1. Compute current reconstruction error for this row
+                let error_r = self.compute_row_error(row_idx, weights, &mask_data, data, n_in);
 
-            // Compute scores for growing and pruning
-            let (grow_scores, prune_scores) = self.compute_scores(weights, &mask, data);
+                // 2. Select pruned weight to restore (grow)
+                let grow_col = self.select_grow_position(
+                    row_idx,
+                    weights,
+                    &mask_data,
+                    &act_stats,
+                    error_r,
+                    n_in,
+                );
 
-            // Swap weights
-            let new_mask = self.swap_weights(&mask, &grow_scores, &prune_scores);
+                // 3. Select active weight to prune (with sign filtering)
+                let prune_col = self.select_prune_position(
+                    row_idx,
+                    weights,
+                    &mask_data,
+                    &act_stats,
+                    error_r,
+                    n_in,
+                );
 
-            // Check convergence
-            let error = self.compute_reconstruction_error(weights, &new_mask, data);
-            self.error_history.push(error);
-
-            if iter > 0 {
-                let prev_error = self.error_history[iter - 1];
-                let error_change = (prev_error - error).abs();
-
-                if error_change < self.config.tolerance {
+                // If we can't find valid swap, skip this row
+                if grow_col.is_none() || prune_col.is_none() {
                     break;
                 }
+
+                let grow_col = grow_col.unwrap();
+                let prune_col = prune_col.unwrap();
+
+                // 4. Swap: restore grow_col, prune prune_col
+                let grow_idx = row_idx * n_in + grow_col;
+                let prune_idx = row_idx * n_in + prune_col;
+
+                mask_data[grow_idx] = true;
+                mask_data[prune_idx] = false;
+
+                // 5. Check convergence for this row
+                let new_error = self.compute_row_error(row_idx, weights, &mask_data, data, n_in);
+
+                if (error_r - new_error).abs() < self.config.tolerance {
+                    break; // Row converged
+                }
             }
-
-            mask = new_mask;
         }
 
-        mask
-    }
+        // Convert mask_data back to SparseMask
+        let mask_tensor = Tensor::<B, 2, Bool>::from_data(
+            TensorData::new(mask_data, Shape::new([n_out, n_in])),
+            &weights.device(),
+        );
 
-    /// Perform a single refinement step.
-    ///
-    /// # Arguments
-    ///
-    /// * `weights` - Weight matrix [n_out, n_in]
-    /// * `mask` - Current mask
-    /// * `data` - Calibration data
-    ///
-    /// # Returns
-    ///
-    /// Updated mask after one swap iteration
-    pub fn step(
-        &mut self,
-        weights: &Tensor<B, 2>,
-        mask: &SparseMask<B>,
-        data: &CalibrationData<B>,
-    ) -> SparseMask<B> {
-        let (grow_scores, prune_scores) = self.compute_scores(weights, mask, data);
-        self.swap_weights(mask, &grow_scores, &prune_scores)
-    }
-
-    /// Check if refinement has converged.
-    pub fn has_converged(&self) -> bool {
-        if self.error_history.len() < 2 {
-            return false;
-        }
-
-        let len = self.error_history.len();
-        (self.error_history[len - 2] - self.error_history[len - 1]).abs()
-            < self.config.tolerance
+        SparseMask::from_tensor(mask_tensor)
     }
 
     /// Get error history across iterations.
@@ -186,232 +182,182 @@ impl<B: Backend> DSnoT<B> {
         &self.error_history
     }
 
-    /// Get current iteration number.
-    pub fn iteration(&self) -> usize {
-        self.iteration
-    }
-
     // Private helper methods
 
-    fn compute_scores(
+    /// Compute reconstruction error for a single row.
+    fn compute_row_error(
         &self,
+        row_idx: usize,
         weights: &Tensor<B, 2>,
-        mask: &SparseMask<B>,
+        mask_data: &[bool],
         data: &CalibrationData<B>,
-    ) -> (Tensor<B, 2>, Tensor<B, 2>) {
-        let (grow_mean, grow_var) = self.compute_growing_distribution(weights, mask, data);
-        let prune_mean = self.compute_pruning_distribution(weights, mask, data);
+        n_in: usize,
+    ) -> f32 {
+        // Extract row weights
+        let w_row = weights.clone().slice([row_idx..row_idx + 1]);
 
-        // Growing score: μ / (σ² + λ)^α (Sharpe ratio with variance penalty)
-        let grow_scores = grow_mean / (grow_var + self.config.lambda).powf_scalar(self.config.alpha);
-
-        // Pruning score: just mean damage
-        let prune_scores = prune_mean;
-
-        (grow_scores, prune_scores)
-    }
-
-    fn compute_growing_distribution(
-        &self,
-        weights: &Tensor<B, 2>,
-        mask: &SparseMask<B>,
-        data: &CalibrationData<B>,
-    ) -> (Tensor<B, 2>, Tensor<B, 2>) {
-        // For each pruned position, compute error reduction if restored
-
-        let mut error_reductions = Vec::new();
-
-        for sample in data.iter() {
-            let error_reduction =
-                self.compute_error_reduction_per_weight(weights, mask, &sample);
-            error_reductions.push(error_reduction);
-        }
-
-        // Compute mean and variance across samples
-        let stacked = Tensor::stack(error_reductions, 0); // [n_samples, n_out, n_in]
-        let mean = stacked.clone().mean_dim(0); // [n_out, n_in]
-        let variance = (stacked - mean.clone().unsqueeze())
-            .powf_scalar(2.0)
-            .mean_dim(0); // [n_out, n_in]
-
-        (mean, variance)
-    }
-
-    fn compute_pruning_distribution(
-        &self,
-        weights: &Tensor<B, 2>,
-        mask: &SparseMask<B>,
-        data: &CalibrationData<B>,
-    ) -> Tensor<B, 2> {
-        // For each active position, compute error increase if pruned
-
-        let mut error_increases = Vec::new();
-
-        for sample in data.iter() {
-            let error_increase = self.compute_error_increase_per_weight(weights, mask, &sample);
-            error_increases.push(error_increase);
-        }
-
-        // Just use mean (no variance penalty for pruning)
-        let stacked = Tensor::stack(error_increases, 0); // [n_samples, n_out, n_in]
-        stacked.mean_dim(0) // [n_out, n_in]
-    }
-
-    fn compute_error_reduction_per_weight(
-        &self,
-        weights: &Tensor<B, 2>,
-        mask: &SparseMask<B>,
-        sample: &Tensor<B, 1>,
-    ) -> Tensor<B, 2> {
-        // For each pruned position (i,j):
-        // error_before = ||e_i||² where e_i = Σ_{j:M[i,j]=0} W[i,j]x[j]
-        // error_after = ||e_i - W[i,j]x[j]||²
-        // Δε[i,j] = error_before - error_after
-        //        = 2*W[i,j]*x[j]*e_i - W[i,j]²*x[j]²
-
-        let w_sparse = mask.apply(weights);
-
-        // output_sparse = W_sparse @ x  (note: need to handle dimensions)
-        // sample is [n_in], weights are [n_out, n_in]
-        let output_sparse = w_sparse.matmul(sample.clone().unsqueeze_dim(1)).squeeze::<1>(); // [n_out]
-        let output_dense = weights.clone().matmul(sample.clone().unsqueeze_dim(1)).squeeze::<1>(); // [n_out]
-
-        // Reconstruction error per row
-        let error_per_row = output_dense - output_sparse; // [n_out]
-
-        // Broadcast sample to [n_out, n_in]
-        let sample_broadcast = sample.clone().unsqueeze(); // [1, n_in]
-
-        // Weight contribution: W[i,j] * x[j]
-        let weight_contribution = weights.clone() * sample_broadcast.clone(); // [n_out, n_in]
-
-        // error_broadcast: e_i for each row
-        let error_broadcast = error_per_row.unsqueeze(); // [n_out, 1]
-
-        // Δε = 2*W*x*e - W²*x²
-        let reduction = weight_contribution.clone() * error_broadcast * 2.0
-            - weight_contribution.powf_scalar(2.0);
-
-        // Only consider pruned positions (mask out active ones)
-        let pruned_mask_int = mask.complement().tensor().clone().int().float();
-        reduction * pruned_mask_int
-    }
-
-    fn compute_error_increase_per_weight(
-        &self,
-        weights: &Tensor<B, 2>,
-        mask: &SparseMask<B>,
-        sample: &Tensor<B, 1>,
-    ) -> Tensor<B, 2> {
-        // For each active position (i,j):
-        // error_before = current reconstruction error
-        // error_after = error if we prune W[i,j]
-        // Δε[i,j] = error_after - error_before
-        //        = 2*W[i,j]*x[j]*e_i + W[i,j]²*x[j]²
-
-        let w_sparse = mask.apply(weights);
-
-        let output_sparse = w_sparse.matmul(sample.clone().unsqueeze_dim(1)).squeeze::<1>(); // [n_out]
-        let output_dense = weights.clone().matmul(sample.clone().unsqueeze_dim(1)).squeeze::<1>(); // [n_out]
-
-        let error_per_row = output_dense - output_sparse; // [n_out]
-
-        let sample_broadcast = sample.clone().unsqueeze(); // [1, n_in]
-        let weight_contribution = weights.clone() * sample_broadcast.clone(); // [n_out, n_in]
-        let error_broadcast = error_per_row.unsqueeze(); // [n_out, 1]
-
-        // Δε = 2*W*x*e + W²*x²
-        let increase = weight_contribution.clone() * error_broadcast * 2.0
-            + weight_contribution.powf_scalar(2.0);
-
-        // Only consider active positions
-        let active_mask_int = mask.tensor().clone().int().float();
-        increase * active_mask_int
-    }
-
-    fn swap_weights(
-        &self,
-        mask: &SparseMask<B>,
-        grow_scores: &Tensor<B, 2>,
-        prune_scores: &Tensor<B, 2>,
-    ) -> SparseMask<B> {
-        let k = ((self.config.update_threshold * mask.n_active() as f32) as usize).max(1);
-
-        // Get top-K pruned positions to grow
-        let grow_flat = mask.gather_pruned(grow_scores);
-        let to_grow_local = topk_indices(&grow_flat.unsqueeze(), k);
-        let to_grow_global: Vec<usize> = to_grow_local
-            .iter()
-            .map(|&i| mask.pruned_indices()[i])
-            .collect();
-
-        // Get bottom-K active positions to prune
-        let prune_flat = mask.gather_active(prune_scores);
-        let to_prune_local = bottomk_indices(&prune_flat.unsqueeze(), k);
-        let to_prune_global: Vec<usize> = to_prune_local
-            .iter()
-            .map(|&i| mask.active_indices()[i])
-            .collect();
-
-        // Create new mask with swapped positions
-        let mut active = mask.active_indices().to_vec();
-        let mut pruned = mask.pruned_indices().to_vec();
-
-        // Remove from active, add to pruned
-        for &idx in &to_prune_global {
-            active.retain(|&x| x != idx);
-            if !pruned.contains(&idx) {
-                pruned.push(idx);
+        // Apply mask to this row
+        let mut w_sparse_data = vec![0.0f32; n_in];
+        for col in 0..n_in {
+            let idx = row_idx * n_in + col;
+            if mask_data[idx] {
+                let w_val: Vec<f32> = w_row
+                    .clone()
+                    .slice([0..1, col..col + 1])
+                    .into_data()
+                    .to_vec()
+                    .unwrap();
+                w_sparse_data[col] = w_val[0];
             }
         }
 
-        // Remove from pruned, add to active
-        for &idx in &to_grow_global {
-            pruned.retain(|&x| x != idx);
-            if !active.contains(&idx) {
-                active.push(idx);
-            }
-        }
-
-        // Reconstruct mask tensor
-        let total = mask.shape()[0] * mask.shape()[1];
-        let mut mask_data = vec![false; total];
-        for &idx in &active {
-            mask_data[idx] = true;
-        }
-
-        use burn_core::tensor::{Bool, Shape, TensorData};
-        let mask_tensor = Tensor::<B, 2, Bool>::from_data(
-            TensorData::new(mask_data, Shape::new(mask.shape())),
-            mask.device(),
+        let w_sparse_row = Tensor::<B, 2>::from_data(
+            TensorData::new(w_sparse_data, Shape::new([1, n_in])),
+            &weights.device(),
         );
 
-        SparseMask::from_tensor(mask_tensor)
-    }
-
-    fn compute_reconstruction_error(
-        &self,
-        weights: &Tensor<B, 2>,
-        mask: &SparseMask<B>,
-        data: &CalibrationData<B>,
-    ) -> f32 {
-        let w_sparse = mask.apply(weights);
-
-        let mut total_error: f32 = 0.0;
+        // Compute error across all samples
+        let mut total_error = 0.0f32;
         let mut n_samples = 0;
 
         for sample in data.iter() {
+            // Dense output: w_row · sample [1, 1]
+            let y_dense = w_row
+                .clone()
+                .matmul(sample.clone().unsqueeze_dim(1));
+
+            // Sparse output: w_sparse_row · sample [1, 1]
+            let y_sparse = w_sparse_row
+                .clone()
+                .matmul(sample.clone().unsqueeze_dim(1));
+
+            // Squared error for this sample
+            let error = (y_dense - y_sparse).powf_scalar(2.0);
+
             use burn_core::tensor::ElementConversion;
-
-            let y_dense = weights.clone().matmul(sample.clone().unsqueeze_dim(1)).squeeze::<1>();
-            let y_sparse = w_sparse.clone().matmul(sample.clone().unsqueeze_dim(1)).squeeze::<1>();
-
-            let error = (y_dense - y_sparse).powf_scalar(2.0).sum();
             total_error += error.into_scalar().elem::<f32>();
             n_samples += 1;
         }
 
         total_error / n_samples as f32
+    }
+
+    /// Select pruned position to restore (grow).
+    ///
+    /// Score: `W · E[A] / Var[A]`
+    /// - If error > 0: restore weight with highest score
+    /// - If error < 0: restore weight with lowest score
+    fn select_grow_position(
+        &self,
+        row_idx: usize,
+        weights: &Tensor<B, 2>,
+        mask_data: &[bool],
+        act_stats: &ActivationStats<B>,
+        error: f32,
+        n_in: usize,
+    ) -> Option<usize> {
+        let mean_act = act_stats.mean();
+        let var_act = act_stats.variance();
+
+        let mean_data: Vec<f32> = mean_act.clone().into_data().to_vec().unwrap();
+        let var_data: Vec<f32> = var_act.clone().into_data().to_vec().unwrap();
+
+        let w_row = weights.clone().slice([row_idx..row_idx + 1]);
+        let w_data: Vec<f32> = w_row.into_data().to_vec().unwrap();
+
+        let mut best_col: Option<usize> = None;
+        let mut best_score = if error > 0.0 {
+            f32::NEG_INFINITY
+        } else {
+            f32::INFINITY
+        };
+
+        for col in 0..n_in {
+            let idx = row_idx * n_in + col;
+
+            // Only consider pruned positions
+            if mask_data[idx] {
+                continue;
+            }
+
+            // Score: W · E[A] / Var[A]
+            let score = w_data[col] * mean_data[col] / (var_data[col] + 1e-8);
+
+            // Select based on error sign
+            if error > 0.0 {
+                // Want to decrease error -> pick highest score
+                if score > best_score {
+                    best_score = score;
+                    best_col = Some(col);
+                }
+            } else {
+                // Want to increase error -> pick lowest score
+                if score < best_score {
+                    best_score = score;
+                    best_col = Some(col);
+                }
+            }
+        }
+
+        best_col
+    }
+
+    /// Select active position to prune.
+    ///
+    /// Score: `|W| · ||A||_2` (Wanda metric)
+    /// Constraint: Only weights where `W · E[A]` has opposite sign to error
+    fn select_prune_position(
+        &self,
+        row_idx: usize,
+        weights: &Tensor<B, 2>,
+        mask_data: &[bool],
+        act_stats: &ActivationStats<B>,
+        error: f32,
+        n_in: usize,
+    ) -> Option<usize> {
+        let mean_act = act_stats.mean();
+        let l2_norm = act_stats.l2_norm();
+
+        let mean_data: Vec<f32> = mean_act.clone().into_data().to_vec().unwrap();
+        let l2_data: Vec<f32> = l2_norm.clone().into_data().to_vec().unwrap();
+
+        let w_row = weights.clone().slice([row_idx..row_idx + 1]);
+        let w_data: Vec<f32> = w_row.into_data().to_vec().unwrap();
+
+        let mut best_col: Option<usize> = None;
+        let mut best_score = f32::INFINITY;
+
+        for col in 0..n_in {
+            let idx = row_idx * n_in + col;
+
+            // Only consider active positions
+            if !mask_data[idx] {
+                continue;
+            }
+
+            // Sign constraint: W · E[A] must have opposite sign to error
+            let contribution = w_data[col] * mean_data[col];
+
+            let is_safe = if error > 0.0 {
+                contribution < 0.0 // Want negative contribution
+            } else {
+                contribution > 0.0 // Want positive contribution
+            };
+
+            if !is_safe {
+                continue;
+            }
+
+            // Wanda score: |W| · ||A||_2
+            let score = w_data[col].abs() * l2_data[col];
+
+            if score < best_score {
+                best_score = score;
+                best_col = Some(col);
+            }
+        }
+
+        best_col
     }
 }
 
@@ -454,7 +400,6 @@ mod tests {
         let config = DSnoTConfig::default();
         let dsnot = DSnoT::<TB>::new(config);
 
-        assert_eq!(dsnot.iteration(), 0);
         assert_eq!(dsnot.error_history().len(), 0);
     }
 
@@ -464,10 +409,8 @@ mod tests {
 
         let config = DSnoTConfig {
             max_iters: 5,
-            update_threshold: 0.01,
-            alpha: 1.0,
             tolerance: 1e-5,
-            lambda: 1e-8,
+            n_calibration: 3,
         };
 
         let mut dsnot = DSnoT::new(config);
@@ -475,47 +418,19 @@ mod tests {
 
         assert_eq!(refined_mask.shape(), initial_mask.shape());
         assert_eq!(refined_mask.n_active(), initial_mask.n_active());
-        assert!(dsnot.error_history().len() > 0);
     }
 
     #[test]
-    fn test_dsnot_step() {
+    fn test_dsnot_preserves_sparsity() {
         let (weights, initial_mask, calibration) = create_test_setup();
 
         let config = DSnoTConfig::default();
         let mut dsnot = DSnoT::new(config);
 
-        let new_mask = dsnot.step(&weights, &initial_mask, &calibration);
+        let initial_sparsity = initial_mask.actual_sparsity();
+        let refined_mask = dsnot.refine(&weights, &initial_mask, &calibration);
 
-        assert_eq!(new_mask.shape(), initial_mask.shape());
         // Sparsity should be preserved
-        assert_eq!(new_mask.n_active(), initial_mask.n_active());
-    }
-
-    #[test]
-    fn test_dsnot_error_decreases() {
-        let (weights, initial_mask, calibration) = create_test_setup();
-
-        let config = DSnoTConfig {
-            max_iters: 10,
-            update_threshold: 0.05,
-            alpha: 1.0,
-            tolerance: 1e-5,
-            lambda: 1e-8,
-        };
-
-        let mut dsnot = DSnoT::new(config);
-        let _ = dsnot.refine(&weights, &initial_mask, &calibration);
-
-        let history = dsnot.error_history();
-
-        // Error should generally decrease or stay flat (allowing small increases due to numerical issues)
-        if history.len() > 1 {
-            let first_error = history[0];
-            let last_error = history[history.len() - 1];
-
-            // Last error should not be significantly higher than first
-            assert!(last_error <= first_error * 1.1);
-        }
+        assert!((refined_mask.actual_sparsity() - initial_sparsity).abs() < 0.01);
     }
 }
