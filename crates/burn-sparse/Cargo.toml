@@ -30,7 +30,7 @@ test-rocm = ["burn-rocm/default"]
 
 [dependencies]
 # ** Please make sure all dependencies support no_std when std is disabled **
-
+burn = { path = "../burn", version = "0.20.0", default-features = false }
 burn-core = { path = "../burn-core", version = "0.20.0", default-features = false }
 
 # Numeric traits
