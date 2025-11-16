@@ -1,0 +1,60 @@
+[package]
+name = "burn-sparse"
+authors = ["Trần Đức Huy"]
+categories = ["science", "no-std", "machine-learning"]
+description = "Sparse training and pruning toolkit for Burn deep learning framework"
+documentation = "https://docs.rs/burn-sparse"
+edition.workspace = true
+keywords = ["sparse", "pruning", "neural-networks", "burn", "wanda"]
+license.workspace = true
+readme = "README.md"
+repository = "https://github.com/tracel-ai/burn/tree/main/crates/burn-sparse"
+version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["std"]
+std = [
+    "burn-core/std",
+    "serde/std",
+    "num-traits/std",
+]
+
+# For testing
+test-tch = ["burn-tch/default"]
+test-wgpu = ["burn-wgpu/default"]
+test-cuda = ["burn-cuda/default"]
+test-rocm = ["burn-rocm/default"]
+
+[dependencies]
+# ** Please make sure all dependencies support no_std when std is disabled **
+
+burn-core = { path = "../burn-core", version = "0.20.0", default-features = false }
+
+# Numeric traits
+num-traits = { workspace = true }
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+
+# Random number generation
+rand = { workspace = true }
+
+# Derive macros
+derive-new = { workspace = true }
+
+# FOR TESTING
+burn-tch = { path = "../burn-tch", version = "0.20.0", optional = true }
+burn-wgpu = { path = "../burn-wgpu", version = "0.20.0", optional = true, default-features = false }
+burn-cuda = { path = "../burn-cuda", version = "0.20.0", optional = true, default-features = false }
+burn-rocm = { path = "../burn-rocm", version = "0.20.0", optional = true, default-features = false }
+
+[dev-dependencies]
+burn-ndarray = { path = "../burn-ndarray", version = "0.20.0" }
+burn-autodiff = { path = "../burn-autodiff", version = "0.20.0" }
+rstest = { workspace = true }
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docsrs"]
