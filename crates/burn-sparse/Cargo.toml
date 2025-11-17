@@ -20,7 +20,18 @@ std = [
     "burn-core/std",
     "serde/std",
     "num-traits/std",
+    "thiserror",
 ]
+
+# Optional modules
+nn = []
+optim = []
+dynamic = []
+experimental = []
+
+# Backend-specific kernels
+cuda = []
+wgpu = []
 
 # For testing
 test-tch = ["burn-tch/default"]
@@ -44,6 +55,9 @@ rand = { workspace = true }
 
 # Derive macros
 derive-new = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true, optional = true }
 
 # FOR TESTING
 burn-tch = { path = "../burn-tch", version = "0.20.0", optional = true }
