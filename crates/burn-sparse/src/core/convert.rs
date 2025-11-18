@@ -152,20 +152,67 @@ fn from_csr<B: Backend>(csr: &SparseTensor<B>, target: SparseFormat) -> SparseRe
 // Format-Specific Conversions (Implementations)
 // ============================================================================
 
-fn mask_to_csr<B: Backend>(
+pub(crate) fn mask_to_csr<B: Backend>(
     mask: &Tensor<B, 2, Bool>,
     values: &Tensor<B, 2>,
     shape: [usize; 2],
     device: &B::Device,
 ) -> SparseResult<SparseTensor<B>> {
-    // TODO: Implement Mask → CSR conversion
-    // For now, return empty CSR
-    let [n_rows, _n_cols] = shape;
+    let [n_rows, n_cols] = shape;
 
-    Ok(SparseTensor::from_dense(
-        values,
-        SparseFormat::CSR,
-        0.0,
+    // Move data to CPU for processing
+    let mask_data: Vec<bool> = mask.clone().into_data().to_vec().unwrap();
+    let values_data: Vec<f32> = values.clone().into_data().to_vec().unwrap();
+
+    // Build CSR format on CPU
+    let mut row_pointers: Vec<i64> = Vec::with_capacity(n_rows + 1);
+    let mut col_indices: Vec<i64> = Vec::new();
+    let mut csr_values: Vec<f32> = Vec::new();
+
+    row_pointers.push(0);
+
+    for row in 0..n_rows {
+        let row_start = row * n_cols;
+        let row_end = row_start + n_cols;
+
+        for col in 0..n_cols {
+            let idx = row_start + col;
+            if mask_data[idx] {
+                // This position is active (not pruned)
+                col_indices.push(col as i64);
+                csr_values.push(values_data[idx]);
+            }
+        }
+
+        // row_pointers[i+1] = cumulative count of non-zeros up to row i
+        row_pointers.push(col_indices.len() as i64);
+    }
+
+    let nnz = csr_values.len();
+
+    // Create Burn tensors from CSR data
+    let csr_values_tensor = Tensor::<B, 1>::from_data(
+        TensorData::new(csr_values, Shape::new([nnz])),
+        device,
+    );
+
+    let col_indices_tensor = Tensor::<B, 1, Int>::from_data(
+        TensorData::new(col_indices, Shape::new([nnz])),
+        device,
+    );
+
+    let row_pointers_tensor = Tensor::<B, 1, Int>::from_data(
+        TensorData::new(row_pointers, Shape::new([n_rows + 1])),
+        device,
+    );
+
+    // Build SparseTensor with CSR format
+    Ok(SparseTensor::from_csr(
+        csr_values_tensor,
+        col_indices_tensor,
+        row_pointers_tensor,
+        shape,
+        device.clone(),
     ))
 }
 
@@ -231,4 +278,104 @@ fn coo_to_csr<B: Backend>(
         to: SparseFormat::CSR,
         reason: "Not yet implemented".to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TestBackend as TB;
+
+    #[test]
+    fn test_mask_to_csr_conversion() {
+        let device = Default::default();
+
+        // Create a simple 3x3 sparse matrix
+        // [1.0  0.0  2.0]
+        // [0.0  3.0  0.0]
+        // [4.0  0.0  5.0]
+        let dense = Tensor::<TB, 2>::from_data(
+            [
+                [1.0, 0.0, 2.0],
+                [0.0, 3.0, 0.0],
+                [4.0, 0.0, 5.0],
+            ],
+            &device,
+        );
+
+        // Create mask (true for non-zero)
+        let mask = Tensor::<TB, 2, Bool>::from_data(
+            [
+                [true, false, true],
+                [false, true, false],
+                [true, false, true],
+            ],
+            &device,
+        );
+
+        // Convert to CSR
+        let csr = mask_to_csr(&mask, &dense, [3, 3], &device).unwrap();
+
+        // Verify format
+        assert_eq!(csr.format(), SparseFormat::CSR);
+        assert_eq!(csr.shape(), [3, 3]);
+        assert_eq!(csr.nnz(), 5);
+
+        // Extract CSR data and verify structure
+        match csr.data() {
+            SparseTensorData::CSR { values, col_indices, row_pointers } => {
+                // Check values
+                let vals: Vec<f32> = values.clone().into_data().to_vec().unwrap();
+                assert_eq!(vals, vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+
+                // Check col_indices
+                let cols: Vec<i64> = col_indices.clone().into_data().to_vec().unwrap();
+                assert_eq!(cols, vec![0, 2, 1, 0, 2]);
+
+                // Check row_pointers
+                let ptrs: Vec<i64> = row_pointers.clone().into_data().to_vec().unwrap();
+                assert_eq!(ptrs, vec![0, 2, 3, 5]);
+            }
+            _ => panic!("Expected CSR format"),
+        }
+    }
+
+    #[test]
+    fn test_mask_to_csr_empty_rows() {
+        let device = Default::default();
+
+        // Matrix with an empty row
+        // [1.0  2.0]
+        // [0.0  0.0]
+        // [3.0  4.0]
+        let dense = Tensor::<TB, 2>::from_data(
+            [
+                [1.0, 2.0],
+                [0.0, 0.0],
+                [3.0, 4.0],
+            ],
+            &device,
+        );
+
+        let mask = Tensor::<TB, 2, Bool>::from_data(
+            [
+                [true, true],
+                [false, false],
+                [true, true],
+            ],
+            &device,
+        );
+
+        let csr = mask_to_csr(&mask, &dense, [3, 2], &device).unwrap();
+
+        assert_eq!(csr.nnz(), 4);
+
+        match csr.data() {
+            SparseTensorData::CSR { row_pointers, .. } => {
+                let ptrs: Vec<i64> = row_pointers.clone().into_data().to_vec().unwrap();
+                // Empty row 1 should have same pointer value
+                assert_eq!(ptrs, vec![0, 2, 2, 4]);
+            }
+            _ => panic!("Expected CSR format"),
+        }
+    }
 }

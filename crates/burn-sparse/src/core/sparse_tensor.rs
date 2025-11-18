@@ -159,6 +159,99 @@ impl<B: Backend> SparseTensor<B> {
         sparse
     }
 
+    /// Create sparse tensor from CSR format data
+    ///
+    /// # Arguments
+    /// * `values` - Non-zero values [nnz]
+    /// * `col_indices` - Column indices [nnz]
+    /// * `row_pointers` - Row pointers [n_rows + 1]
+    /// * `shape` - Tensor shape [n_rows, n_cols]
+    /// * `device` - Device location
+    ///
+    /// # Panics
+    /// Panics if CSR data is invalid
+    ///
+    /// # Example
+    /// ```ignore
+    /// use burn_sparse::core::SparseTensor;
+    ///
+    /// let values = Tensor::from_data([1.0, 2.0, 3.0]);
+    /// let col_indices = Tensor::from_data([0, 1, 0]);
+    /// let row_pointers = Tensor::from_data([0, 2, 3]);
+    /// let sparse = SparseTensor::from_csr(values, col_indices, row_pointers, [2, 3], device);
+    /// ```
+    pub fn from_csr(
+        values: Tensor<B, 1>,
+        col_indices: Tensor<B, 1, Int>,
+        row_pointers: Tensor<B, 1, Int>,
+        shape: [usize; 2],
+        device: B::Device,
+    ) -> Self {
+        let data = SparseTensorData::CSR {
+            values,
+            col_indices,
+            row_pointers,
+        };
+
+        let sparse = Self {
+            format: SparseFormat::CSR,
+            shape,
+            data,
+            device,
+        };
+
+        // Validate construction
+        sparse.validate().expect("CSR tensor construction created invalid structure");
+
+        sparse
+    }
+
+    /// Create sparse tensor from SparseMask and dense weights
+    ///
+    /// This converts the algorithm-layer mask to execution-layer CSR format.
+    /// Conversion happens on CPU, then tensors are uploaded to the device.
+    ///
+    /// # Arguments
+    /// * `mask` - Sparsity mask indicating active weights
+    /// * `weights` - Dense weight tensor [n_out, n_in]
+    ///
+    /// # Returns
+    /// SparseTensor in CSR format containing only active (masked) weights
+    ///
+    /// # Panics
+    /// Panics if mask and weights shapes don't match
+    ///
+    /// # Example
+    /// ```ignore
+    /// use burn_sparse::prelude::*;
+    ///
+    /// // Create mask from Wanda
+    /// let mask = SparseMask::from_scores(&scores, 0.5);
+    ///
+    /// // Convert to CSR sparse tensor
+    /// let sparse = SparseTensor::from_mask(&mask, &weights);
+    /// ```
+    pub fn from_mask(
+        mask: &crate::core::SparseMask<B>,
+        weights: &Tensor<B, 2>,
+    ) -> SparseResult<Self> {
+        let shape = mask.shape();
+        let device = weights.device();
+
+        if weights.dims() != shape {
+            return Err(SparseError::InvalidTensor {
+                reason: format!(
+                    "Mask shape {:?} doesn't match weights shape {:?}",
+                    shape,
+                    weights.dims()
+                ),
+            });
+        }
+
+        // Use mask_to_csr conversion
+        crate::core::convert::mask_to_csr(mask.tensor(), weights, shape, &device)
+    }
+
     // ============================================================================
     // Accessors
     // ============================================================================
@@ -353,5 +446,54 @@ mod tests {
     fn test_format_validation() {
         assert!(SparseFormat::validate_block_size(16).is_ok());
         assert!(SparseFormat::validate_nm(2, 4).is_ok());
+    }
+
+    #[test]
+    fn test_from_mask() {
+        use crate::core::SparseMask;
+
+        let device = Default::default();
+
+        // Create dense weights
+        let weights = Tensor::<TB, 2>::from_data(
+            [
+                [1.0, 2.0, 3.0],
+                [4.0, 5.0, 6.0],
+            ],
+            &device,
+        );
+
+        // Create mask (prune positions [0,1] and [1,2])
+        let mask_tensor = Tensor::<TB, 2, Bool>::from_data(
+            [
+                [true, false, true],
+                [true, true, false],
+            ],
+            &device,
+        );
+        let mask = SparseMask::from_tensor(mask_tensor);
+
+        // Convert to SparseTensor
+        let sparse = SparseTensor::from_mask(&mask, &weights).unwrap();
+
+        // Verify
+        assert_eq!(sparse.format(), SparseFormat::CSR);
+        assert_eq!(sparse.shape(), [2, 3]);
+        assert_eq!(sparse.nnz(), 4); // 4 active positions
+
+        // Verify CSR structure
+        match sparse.data() {
+            SparseTensorData::CSR { values, col_indices, row_pointers } => {
+                let vals: Vec<f32> = values.clone().into_data().to_vec().unwrap();
+                assert_eq!(vals, vec![1.0, 3.0, 4.0, 5.0]);
+
+                let cols: Vec<i64> = col_indices.clone().into_data().to_vec().unwrap();
+                assert_eq!(cols, vec![0, 2, 0, 1]);
+
+                let ptrs: Vec<i64> = row_pointers.clone().into_data().to_vec().unwrap();
+                assert_eq!(ptrs, vec![0, 2, 4]);
+            }
+            _ => panic!("Expected CSR format"),
+        }
     }
 }
