@@ -9,6 +9,7 @@
 /// - Format-polymorphic: supports CSR, COO, BlockCSR, N:M, etc.
 /// - Backend-agnostic: works with any Burn backend
 
+use burn_core::module::Parameter;
 use burn_core::tensor::{backend::Backend, Bool, Int, Shape, Tensor, TensorData};
 
 use crate::core::{SparseError, SparseFormat, SparseResult};
@@ -416,6 +417,94 @@ impl<B: Backend> SparseTensor<B> {
     /// Get reference to format-specific data (internal use)
     pub(crate) fn data(&self) -> &SparseTensorData<B> {
         &self.data
+    }
+}
+
+// Parameter trait implementation - enables SparseTensor to be used in Param<SparseTensor<B>>
+impl<B: Backend> Parameter for SparseTensor<B> {
+    type Device = B::Device;
+
+    fn device(&self) -> Self::Device {
+        self.device.clone()
+    }
+
+    /// Check if values tensor requires gradients
+    ///
+    /// Note: Only values can have gradients in sparse tensors.
+    /// Indices are discrete and don't participate in gradient flow.
+    fn is_require_grad(&self) -> bool {
+        match &self.data {
+            SparseTensorData::Mask { values, .. } => values.is_require_grad(),
+            SparseTensorData::CSR { values, .. } => values.is_require_grad(),
+            SparseTensorData::CSC { values, .. } => values.is_require_grad(),
+            SparseTensorData::COO { values, .. } => values.is_require_grad(),
+            SparseTensorData::BlockCSR { blocks, .. } => blocks.is_require_grad(),
+            SparseTensorData::NInM { values, .. } => values.is_require_grad(),
+        }
+    }
+
+    /// Set gradient requirement on values tensor
+    ///
+    /// Note: This only applies to values. Indices never require gradients
+    /// as the sparsity structure is either fixed or changed discretely by
+    /// algorithms like RigL/MEST.
+    fn set_require_grad(mut self, require_grad: bool) -> Self {
+        self.data = match self.data {
+            SparseTensorData::Mask { mask, values } => SparseTensorData::Mask {
+                mask,
+                values: values.set_require_grad(require_grad),
+            },
+            SparseTensorData::CSR {
+                values,
+                col_indices,
+                row_pointers,
+            } => SparseTensorData::CSR {
+                values: values.set_require_grad(require_grad),
+                col_indices,
+                row_pointers,
+            },
+            SparseTensorData::CSC {
+                values,
+                row_indices,
+                col_pointers,
+            } => SparseTensorData::CSC {
+                values: values.set_require_grad(require_grad),
+                row_indices,
+                col_pointers,
+            },
+            SparseTensorData::COO {
+                values,
+                row_indices,
+                col_indices,
+            } => SparseTensorData::COO {
+                values: values.set_require_grad(require_grad),
+                row_indices,
+                col_indices,
+            },
+            SparseTensorData::BlockCSR {
+                blocks,
+                block_col_indices,
+                block_row_pointers,
+                block_size,
+            } => SparseTensorData::BlockCSR {
+                blocks: blocks.set_require_grad(require_grad),
+                block_col_indices,
+                block_row_pointers,
+                block_size,
+            },
+            SparseTensorData::NInM {
+                values,
+                metadata,
+                n,
+                m,
+            } => SparseTensorData::NInM {
+                values: values.set_require_grad(require_grad),
+                metadata,
+                n,
+                m,
+            },
+        };
+        self
     }
 }
 

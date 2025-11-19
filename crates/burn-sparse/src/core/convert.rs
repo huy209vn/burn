@@ -344,10 +344,62 @@ fn csc_to_csr<B: Backend>(
     shape: [usize; 2],
     device: &B::Device,
 ) -> SparseResult<SparseTensor<B>> {
-    // CSC → dense → CSR (simple but not optimal)
-    let dense = csc_to_dense(values, row_indices, col_pointers, shape, device);
-    let mask = dense.clone().not_equal_elem(0.0);
-    mask_to_csr(&mask, &dense, shape, device)
+    // Direct CSC → CSR conversion without dense intermediate
+    // Algorithm: Build CSR by iterating through CSC columns
+
+    let [n_rows, n_cols] = shape;
+    let nnz = values.dims()[0];
+
+    // Move to CPU for processing
+    let val_data: Vec<f32> = values.to_data().to_vec().unwrap();
+    let row_data: Vec<i64> = row_indices.to_data().convert::<i64>().to_vec().unwrap();
+    let col_ptr_data: Vec<i64> = col_pointers.to_data().convert::<i64>().to_vec().unwrap();
+
+    // Step 1: Count elements per row
+    let mut row_counts = vec![0usize; n_rows];
+    for &row in row_data.iter() {
+        row_counts[row as usize] += 1;
+    }
+
+    // Step 2: Build row pointers (cumulative sum)
+    let mut row_pointers = vec![0i64; n_rows + 1];
+    for i in 0..n_rows {
+        row_pointers[i + 1] = row_pointers[i] + row_counts[i] as i64;
+    }
+
+    // Step 3: Place elements in CSR format
+    let mut csr_values = vec![0.0f32; nnz];
+    let mut csr_col_indices = vec![0i64; nnz];
+    let mut current_pos = row_pointers.clone(); // Track current position in each row
+
+    // Iterate through CSC columns
+    for col in 0..n_cols {
+        let col_start = col_ptr_data[col] as usize;
+        let col_end = col_ptr_data[col + 1] as usize;
+
+        for idx in col_start..col_end {
+            let row = row_data[idx] as usize;
+            let val = val_data[idx];
+
+            let pos = current_pos[row] as usize;
+            csr_values[pos] = val;
+            csr_col_indices[pos] = col as i64;
+            current_pos[row] += 1;
+        }
+    }
+
+    // Convert to tensors
+    let csr_values_tensor = Tensor::<B, 1>::from_data(TensorData::new(csr_values, [nnz]), device);
+    let csr_col_indices_tensor = Tensor::<B, 1, Int>::from_data(TensorData::new(csr_col_indices, Shape::new([nnz])), device);
+    let csr_row_pointers_tensor = Tensor::<B, 1, Int>::from_data(TensorData::new(row_pointers, Shape::new([n_rows + 1])), device);
+
+    Ok(SparseTensor::from_csr(
+        csr_values_tensor,
+        csr_col_indices_tensor,
+        csr_row_pointers_tensor,
+        shape,
+        device.clone(),
+    ))
 }
 
 fn coo_to_csr<B: Backend>(
