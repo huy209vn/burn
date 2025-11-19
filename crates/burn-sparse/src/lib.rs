@@ -89,7 +89,6 @@ pub mod kernel;
 ///
 /// - SparseLinear
 /// - Dense ↔ Sparse conversions
-#[cfg(feature = "nn")]
 pub mod nn;
 
 /// Sparse optimizers
@@ -136,9 +135,8 @@ pub mod prelude {
     // Kernel
     pub use crate::kernel::{SparseConfig, SparseDispatch};
 
-    // Neural network (when enabled)
-    #[cfg(feature = "nn")]
-    pub use crate::nn::SparseLinear;
+    // Neural network
+    pub use crate::nn::{SparseLinear, SparseLinearConfig};
 }
 
 /// Backend for test cases
