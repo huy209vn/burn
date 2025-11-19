@@ -123,8 +123,8 @@ pub mod prelude {
 
     // Core types
     pub use crate::core::{
-        ActivationStats, CalibrationData, SparseError, SparseFormat, SparseMask, SparseResult,
-        SparseTensor, SparseTensorData,
+        ActivationStats, CalibrationData, SparseError, SparseFormat, SparseMask, SparseParam,
+        SparseResult, SparseTensor, SparseTensorData,
     };
 
     // Methods
@@ -136,7 +136,7 @@ pub mod prelude {
     pub use crate::kernel::{SparseConfig, SparseDispatch};
 
     // Neural network
-    pub use crate::nn::{SparseLinear, SparseLinearConfig};
+    pub use crate::nn::SparseLinear;
 }
 
 /// Backend for test cases

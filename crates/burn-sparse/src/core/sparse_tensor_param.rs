@@ -14,9 +14,10 @@ use burn_core::module::{
 use burn_core::record::{PrecisionSettings, Record};
 use burn_core::tensor::backend::{AutodiffBackend, Backend};
 use burn_core::tensor::ops::Device;
-use burn_core::tensor::{Bool, Int, Tensor};
-use alloc::{format, string::ToString};
+use burn_core::tensor::{Bool, Int, Tensor, TensorData};
+use alloc::{format, string::ToString, vec::Vec};
 use core::ops::{Deref, DerefMut};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Newtype wrapper for sparse tensor parameters
 ///
@@ -25,6 +26,92 @@ use core::ops::{Deref, DerefMut};
 #[derive(Debug, Clone)]
 pub struct SparseParam<B: Backend> {
     inner: Param<SparseTensor<B>>,
+}
+
+/// Serializable representation of SparseParam for Record system
+#[derive(Serialize, Deserialize)]
+struct SparseParamData {
+    format: crate::core::SparseFormat,
+    shape: [usize; 2],
+    // Serialize as raw data to avoid backend-specific issues
+    values_data: Vec<f32>,
+    col_indices_data: Option<Vec<i64>>,
+    row_indices_data: Option<Vec<i64>>,
+    row_pointers_data: Option<Vec<i64>>,
+    col_pointers_data: Option<Vec<i64>>,
+    mask_data: Option<Vec<bool>>,
+    // For BlockCSR
+    blocks_data: Option<Vec<f32>>,
+    block_col_indices_data: Option<Vec<i64>>,
+    block_row_pointers_data: Option<Vec<i64>>,
+    block_size: Option<usize>,
+    // For N:M
+    metadata_data: Option<Vec<i64>>,
+    n: Option<usize>,
+    m: Option<usize>,
+}
+
+impl<B: Backend> Serialize for SparseParam<B> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let sparse = self.val();
+        let data = match sparse.data() {
+            SparseTensorData::CSR { values, col_indices, row_pointers } => {
+                SparseParamData {
+                    format: sparse.format(),
+                    shape: sparse.shape(),
+                    values_data: values.to_data().to_vec().unwrap(),
+                    col_indices_data: Some(col_indices.to_data().to_vec().unwrap()),
+                    row_pointers_data: Some(row_pointers.to_data().to_vec().unwrap()),
+                    row_indices_data: None,
+                    col_pointers_data: None,
+                    mask_data: None,
+                    blocks_data: None,
+                    block_col_indices_data: None,
+                    block_row_pointers_data: None,
+                    block_size: None,
+                    metadata_data: None,
+                    n: None,
+                    m: None,
+                }
+            }
+            _ => todo!("Serialization for other formats not yet implemented"),
+        };
+        data.serialize(serializer)
+    }
+}
+
+impl<'de, B: Backend> Deserialize<'de> for SparseParam<B> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let data = SparseParamData::deserialize(deserializer)?;
+
+        // Reconstruct on default device for now
+        let device = B::Device::default();
+
+        let sparse = match data.format {
+            crate::core::SparseFormat::CSR => {
+                let values_len = data.values_data.len();
+                let col_indices_len = data.col_indices_data.as_ref().unwrap().len();
+                let row_pointers_len = data.row_pointers_data.as_ref().unwrap().len();
+
+                let values = Tensor::from_data(
+                    TensorData::new(data.values_data, [values_len]),
+                    &device
+                );
+                let col_indices = Tensor::from_data(
+                    TensorData::new(data.col_indices_data.unwrap(), [col_indices_len]),
+                    &device
+                );
+                let row_pointers = Tensor::from_data(
+                    TensorData::new(data.row_pointers_data.unwrap(), [row_pointers_len]),
+                    &device
+                );
+                SparseTensor::from_csr(values, col_indices, row_pointers, data.shape, device)
+            }
+            _ => return Err(serde::de::Error::custom("Only CSR format supported for deserialization")),
+        };
+
+        Ok(Self::from_sparse(sparse))
+    }
 }
 
 impl<B: Backend> SparseParam<B> {

@@ -5,4 +5,4 @@
 
 pub mod linear;
 
-pub use linear::{SparseLinear, SparseLinearConfig};
+pub use linear::SparseLinear;
