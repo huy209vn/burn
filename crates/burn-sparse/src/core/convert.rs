@@ -124,12 +124,11 @@ fn from_csr<B: Backend>(csr: &SparseTensor<B>, target: SparseFormat) -> SparseRe
             })
         }
         SparseFormat::COO => {
-            // TODO: Implement CSR → COO
-            Err(SparseError::ConversionFailed {
-                from: SparseFormat::CSR,
-                to: target,
-                reason: "CSR → COO not yet implemented".to_string(),
-            })
+            if let SparseTensorData::CSR { values, col_indices, row_pointers } = csr.data() {
+                csr_to_coo(values, col_indices, row_pointers, csr.shape(), &csr.device())
+            } else {
+                unreachable!("CSR should have CSR data")
+            }
         }
         SparseFormat::BlockCSR { .. } => {
             Err(SparseError::ConversionFailed {
@@ -223,9 +222,28 @@ fn csr_to_dense<B: Backend>(
     shape: [usize; 2],
     device: &B::Device,
 ) -> Tensor<B, 2> {
-    // TODO: Implement CSR → dense conversion
-    // For now, return zeros
-    Tensor::zeros(shape, device)
+    let [n_rows, n_cols] = shape;
+
+    // Move to CPU for processing
+    let val_data: Vec<f32> = values.to_data().to_vec().unwrap();
+    let col_data: Vec<i64> = col_indices.to_data().convert::<i64>().to_vec().unwrap();
+    let row_data: Vec<i64> = row_pointers.to_data().convert::<i64>().to_vec().unwrap();
+
+    // Build dense matrix
+    let mut dense = vec![0.0f32; n_rows * n_cols];
+
+    for i in 0..n_rows {
+        let row_start = row_data[i] as usize;
+        let row_end = row_data[i + 1] as usize;
+
+        for j in row_start..row_end {
+            let col = col_data[j] as usize;
+            let val = val_data[j];
+            dense[i * n_cols + col] = val;
+        }
+    }
+
+    Tensor::from_data(TensorData::new(dense, [n_rows, n_cols]), device)
 }
 
 fn csc_to_dense<B: Backend>(
@@ -235,8 +253,28 @@ fn csc_to_dense<B: Backend>(
     shape: [usize; 2],
     device: &B::Device,
 ) -> Tensor<B, 2> {
-    // TODO: Implement CSC → dense
-    Tensor::zeros(shape, device)
+    let [n_rows, n_cols] = shape;
+
+    // Move to CPU
+    let val_data: Vec<f32> = values.to_data().to_vec().unwrap();
+    let row_data: Vec<i64> = row_indices.to_data().convert::<i64>().to_vec().unwrap();
+    let col_data: Vec<i64> = col_pointers.to_data().convert::<i64>().to_vec().unwrap();
+
+    // Build dense matrix
+    let mut dense = vec![0.0f32; n_rows * n_cols];
+
+    for j in 0..n_cols {
+        let col_start = col_data[j] as usize;
+        let col_end = col_data[j + 1] as usize;
+
+        for i in col_start..col_end {
+            let row = row_data[i] as usize;
+            let val = val_data[i];
+            dense[row * n_cols + j] = val;
+        }
+    }
+
+    Tensor::from_data(TensorData::new(dense, [n_rows, n_cols]), device)
 }
 
 fn coo_to_dense<B: Backend>(
@@ -246,8 +284,57 @@ fn coo_to_dense<B: Backend>(
     shape: [usize; 2],
     device: &B::Device,
 ) -> Tensor<B, 2> {
-    // TODO: Implement COO → dense
-    Tensor::zeros(shape, device)
+    let [n_rows, n_cols] = shape;
+    let nnz = values.dims()[0];
+
+    // Move to CPU
+    let val_data: Vec<f32> = values.to_data().to_vec().unwrap();
+    let row_data: Vec<i64> = row_indices.to_data().convert::<i64>().to_vec().unwrap();
+    let col_data: Vec<i64> = col_indices.to_data().convert::<i64>().to_vec().unwrap();
+
+    // Build dense matrix
+    let mut dense = vec![0.0f32; n_rows * n_cols];
+
+    for idx in 0..nnz {
+        let row = row_data[idx] as usize;
+        let col = col_data[idx] as usize;
+        let val = val_data[idx];
+        dense[row * n_cols + col] = val;
+    }
+
+    Tensor::from_data(TensorData::new(dense, [n_rows, n_cols]), device)
+}
+
+/// Convert CSR to COO (simple expansion of row pointers)
+fn csr_to_coo<B: Backend>(
+    values: &Tensor<B, 1>,
+    col_indices: &Tensor<B, 1, Int>,
+    row_pointers: &Tensor<B, 1, Int>,
+    shape: [usize; 2],
+    device: &B::Device,
+) -> SparseResult<SparseTensor<B>> {
+    let [n_rows, _n_cols] = shape;
+    let nnz = values.dims()[0];
+
+    // Move to CPU
+    let row_data: Vec<i64> = row_pointers.to_data().convert::<i64>().to_vec().unwrap();
+
+    // Expand row pointers to row indices
+    let mut row_indices_vec = Vec::with_capacity(nnz);
+    for i in 0..n_rows {
+        let row_start = row_data[i] as usize;
+        let row_end = row_data[i + 1] as usize;
+        for _ in row_start..row_end {
+            row_indices_vec.push(i as i64);
+        }
+    }
+
+    let row_indices_tensor = Tensor::from_data(TensorData::new(row_indices_vec, [nnz]), device);
+
+    // Build COO SparseTensor manually since there's no from_coo constructor yet
+    // For now, convert back through COO→CSR
+    coo_to_csr(values, &row_indices_tensor, col_indices, shape, device)
+        .and_then(|csr| csr.to_format(SparseFormat::COO))
 }
 
 fn csc_to_csr<B: Backend>(
@@ -257,12 +344,10 @@ fn csc_to_csr<B: Backend>(
     shape: [usize; 2],
     device: &B::Device,
 ) -> SparseResult<SparseTensor<B>> {
-    // TODO: Implement CSC → CSR
-    Err(SparseError::ConversionFailed {
-        from: SparseFormat::CSC,
-        to: SparseFormat::CSR,
-        reason: "Not yet implemented".to_string(),
-    })
+    // CSC → dense → CSR (simple but not optimal)
+    let dense = csc_to_dense(values, row_indices, col_pointers, shape, device);
+    let mask = dense.clone().not_equal_elem(0.0);
+    mask_to_csr(&mask, &dense, shape, device)
 }
 
 fn coo_to_csr<B: Backend>(
@@ -272,12 +357,55 @@ fn coo_to_csr<B: Backend>(
     shape: [usize; 2],
     device: &B::Device,
 ) -> SparseResult<SparseTensor<B>> {
-    // TODO: Implement COO → CSR
-    Err(SparseError::ConversionFailed {
-        from: SparseFormat::COO,
-        to: SparseFormat::CSR,
-        reason: "Not yet implemented".to_string(),
-    })
+    let [n_rows, _n_cols] = shape;
+    let nnz = values.dims()[0];
+
+    // Move to CPU for sorting
+    let val_data: Vec<f32> = values.to_data().to_vec().unwrap();
+    let row_data: Vec<i64> = row_indices.to_data().convert::<i64>().to_vec().unwrap();
+    let col_data: Vec<i64> = col_indices.to_data().convert::<i64>().to_vec().unwrap();
+
+    // Create triplets and sort by (row, col)
+    let mut triplets: Vec<(usize, usize, f32)> = (0..nnz)
+        .map(|i| (row_data[i] as usize, col_data[i] as usize, val_data[i]))
+        .collect();
+
+    triplets.sort_by(|a, b| {
+        if a.0 != b.0 {
+            a.0.cmp(&b.0)
+        } else {
+            a.1.cmp(&b.1)
+        }
+    });
+
+    // Build CSR arrays
+    let mut csr_values = Vec::with_capacity(nnz);
+    let mut csr_col_indices = Vec::with_capacity(nnz);
+    let mut row_pointers = vec![0i64; n_rows + 1];
+
+    for (row, col, val) in triplets {
+        csr_values.push(val);
+        csr_col_indices.push(col as i64);
+        row_pointers[row + 1] += 1;
+    }
+
+    // Convert counts to cumulative sum
+    for i in 0..n_rows {
+        row_pointers[i + 1] += row_pointers[i];
+    }
+
+    // Create tensors
+    let values_tensor = Tensor::from_data(TensorData::new(csr_values, [nnz]), device);
+    let col_indices_tensor = Tensor::from_data(TensorData::new(csr_col_indices, [nnz]), device);
+    let row_pointers_tensor = Tensor::from_data(TensorData::new(row_pointers, [n_rows + 1]), device);
+
+    Ok(SparseTensor::from_csr(
+        values_tensor,
+        col_indices_tensor,
+        row_pointers_tensor,
+        shape,
+        device.clone(),
+    ))
 }
 
 #[cfg(test)]

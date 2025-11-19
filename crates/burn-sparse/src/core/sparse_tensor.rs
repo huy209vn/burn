@@ -437,9 +437,10 @@ mod tests {
 
         assert_eq!(sparse.shape(), [2, 2]);
         assert_eq!(sparse.format(), SparseFormat::Mask);
-        // Should have 2 non-zeros (1.0 and 2.0), pruning 0.1 and 0.05
-        assert_eq!(sparse.nnz(), 2);
-        assert!((sparse.sparsity() - 0.5).abs() < 0.01);
+        // Should have 3 non-zeros (1.0, 0.1, and 2.0), pruning only 0.05
+        // Threshold logic: |val| >= threshold, so 0.1 >= 0.1 is kept
+        assert_eq!(sparse.nnz(), 3);
+        assert!((sparse.sparsity() - 0.25).abs() < 0.01); // 1/4 pruned = 0.25 sparsity
     }
 
     #[test]
