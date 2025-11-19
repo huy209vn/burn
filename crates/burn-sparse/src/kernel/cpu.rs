@@ -24,10 +24,10 @@ impl CpuKernel {
         let k = b.dims()[1];
 
         // Convert to CPU data for processing
-        let val_data = values.to_data().value;
-        let col_data = col_indices.to_data().convert::<i64>().value;
-        let row_data = row_pointers.to_data().convert::<i64>().value;
-        let b_data = b.to_data().value;
+        let val_data: Vec<f32> = values.to_data().to_vec().unwrap();
+        let col_data: Vec<i64> = col_indices.to_data().convert::<i64>().to_vec().unwrap();
+        let row_data: Vec<i64> = row_pointers.to_data().convert::<i64>().to_vec().unwrap();
+        let b_data: Vec<f32> = b.to_data().to_vec().unwrap();
         let b_cols = b.dims()[1];
 
         let mut result = vec![0.0; n_rows * k];
@@ -67,10 +67,10 @@ impl CpuKernel {
         let nnz = values.dims()[0];
 
         // Convert to CPU data
-        let val_data = values.to_data().value;
-        let row_data = row_indices.to_data().convert::<i64>().value;
-        let col_data = col_indices.to_data().convert::<i64>().value;
-        let b_data = b.to_data().value;
+        let val_data: Vec<f32> = values.to_data().to_vec().unwrap();
+        let row_data: Vec<i64> = row_indices.to_data().convert::<i64>().to_vec().unwrap();
+        let col_data: Vec<i64> = col_indices.to_data().convert::<i64>().to_vec().unwrap();
+        let b_data: Vec<f32> = b.to_data().to_vec().unwrap();
         let b_cols = b.dims()[1];
 
         let mut result = vec![0.0; n_rows * k];
@@ -95,7 +95,7 @@ impl CpuKernel {
 }
 
 impl<B: Backend> SparseKernel<B> for CpuKernel {
-    fn spmm(a: &SparseTensor<B>, b: &Tensor<B, 2>) -> SparseResult<Tensor<B, 2>> {
+    fn spmm(&self, a: &SparseTensor<B>, b: &Tensor<B, 2>) -> SparseResult<Tensor<B, 2>> {
         match &a.data() {
             SparseTensorData::CSR {
                 values,
@@ -112,12 +112,12 @@ impl<B: Backend> SparseKernel<B> for CpuKernel {
             _ => {
                 // Convert to CSR and retry
                 let csr = a.to_format(SparseFormat::CSR)?;
-                Self::spmm(&csr, b)
+                self.spmm(&csr, b)
             }
         }
     }
 
-    fn sddmm(
+    fn sddmm(&self,
         _a: &Tensor<B, 2>,
         _b: &Tensor<B, 2>,
         _mask: &SparseTensor<B>,
@@ -129,18 +129,18 @@ impl<B: Backend> SparseKernel<B> for CpuKernel {
         })
     }
 
-    fn to_format(
+    fn to_format(&self,
         a: &SparseTensor<B>,
         target: SparseFormat,
     ) -> SparseResult<SparseTensor<B>> {
         a.to_format(target)
     }
 
-    fn to_dense(a: &SparseTensor<B>) -> Tensor<B, 2> {
+    fn to_dense(&self, a: &SparseTensor<B>) -> Tensor<B, 2> {
         a.to_dense()
     }
 
-    fn supports(format: SparseFormat) -> KernelSupport {
+    fn supports(&self, format: SparseFormat) -> KernelSupport {
         match format {
             SparseFormat::CSR => KernelSupport::Supported,
             SparseFormat::COO => KernelSupport::Supported,

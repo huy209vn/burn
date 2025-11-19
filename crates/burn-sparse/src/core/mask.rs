@@ -113,15 +113,13 @@ impl<B: Backend> SparseMask<B> {
     /// # Returns
     ///
     /// Randomly initialized mask
+        let mut indices: Vec<usize> = (0..total).collect();
+        use rand::{rng, seq::SliceRandom};
     pub fn random(shape: [usize; 2], sparsity: f32, device: &B::Device) -> Self {
-        use rand::seq::SliceRandom;
-        use rand::thread_rng;
+        use rand::{rng, seq::SliceRandom};
 
         let total = shape[0] * shape[1];
-        let n_pruned = (total as f32 * sparsity) as usize;
-
-        let mut indices: Vec<usize> = (0..total).collect();
-        indices.shuffle(&mut thread_rng());
+        indices.shuffle(&mut rng());
 
         let pruned = indices[..n_pruned].to_vec();
         let active = indices[n_pruned..].to_vec();

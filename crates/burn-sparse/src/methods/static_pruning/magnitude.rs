@@ -85,7 +85,7 @@ mod tests {
         let mask = magnitude.prune(&weights);
 
         // Should keep 2 largest: -4.0 and -3.0 (by absolute value)
-        assert_eq!(mask.sparsity(), 0.5);
+        assert_eq!(mask.actual_sparsity(), 0.5);
         assert_eq!(mask.n_active(), 2);
     }
 }

@@ -81,8 +81,8 @@ pub fn validate_csr<B: Backend>(
     }
 
     // Convert to CPU for validation
-    let col_data = col_indices.to_data().convert::<i64>().value;
-    let row_data = row_pointers.to_data().convert::<i64>().value;
+    let col_data: Vec<i64> = col_indices.to_data().convert::<i64>().to_vec().unwrap();
+    let row_data: Vec<i64> = row_pointers.to_data().convert::<i64>().to_vec().unwrap();
 
     // Check row_pointers[0] == 0
     if row_data[0] != 0 {
@@ -186,8 +186,8 @@ pub fn validate_coo<B: Backend>(
     }
 
     // Check bounds
-    let row_data = row_indices.to_data().convert::<i64>().value;
-    let col_data = col_indices.to_data().convert::<i64>().value;
+    let row_data: Vec<i64> = row_indices.to_data().convert::<i64>().to_vec().unwrap();
+    let col_data: Vec<i64> = col_indices.to_data().convert::<i64>().to_vec().unwrap();
 
     for i in 0..nnz {
         let row = row_data[i];
@@ -249,8 +249,8 @@ pub fn validate_csc<B: Backend>(
     }
 
     // Convert to CPU for validation
-    let row_data = row_indices.to_data().convert::<i64>().value;
-    let col_data = col_pointers.to_data().convert::<i64>().value;
+    let row_data: Vec<i64> = row_indices.to_data().convert::<i64>().to_vec().unwrap();
+    let col_data: Vec<i64> = col_pointers.to_data().convert::<i64>().to_vec().unwrap();
 
     // Check col_pointers[0] == 0
     if col_data[0] != 0 {
@@ -326,7 +326,7 @@ pub fn validate_nm_pattern<B: Backend>(
     dim: usize, // 0 for row-wise, 1 for column-wise
 ) -> SparseResult<()> {
     let shape = mask.dims();
-    let mask_data = mask.clone().int().to_data().convert::<i64>().value;
+    let mask_data: Vec<i64> = mask.clone().int().to_data().convert::<i64>().to_vec().unwrap();
 
     let (outer_dim, inner_dim) = if dim == 0 {
         (shape[0], shape[1])

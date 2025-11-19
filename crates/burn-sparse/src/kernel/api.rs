@@ -24,6 +24,8 @@ pub enum KernelSupport {
 ///
 /// Each backend (CPU, CUDA, WGPU) implements this trait to provide
 /// sparse tensor operations.
+///
+/// Note: All methods are non-static to make the trait object-safe
 pub trait SparseKernel<B: Backend> {
     // ===== Core Operations =====
 
@@ -36,6 +38,7 @@ pub trait SparseKernel<B: Backend> {
     /// # Returns
     /// Dense result [n, k]
     fn spmm(
+        &self,
         a: &SparseTensor<B>,
         b: &Tensor<B, 2>,
     ) -> SparseResult<Tensor<B, 2>>;
@@ -45,6 +48,7 @@ pub trait SparseKernel<B: Backend> {
     /// Computes dense matmul but only returns values at sparse positions.
     /// Critical for backprop through sparse weights.
     fn sddmm(
+        &self,
         a: &Tensor<B, 2>,
         b: &Tensor<B, 2>,
         mask: &SparseTensor<B>,  // Used for sampling positions
@@ -54,15 +58,16 @@ pub trait SparseKernel<B: Backend> {
 
     /// Convert sparse tensor to different format
     fn to_format(
+        &self,
         a: &SparseTensor<B>,
         target: SparseFormat,
     ) -> SparseResult<SparseTensor<B>>;
 
     /// Convert sparse to dense
-    fn to_dense(a: &SparseTensor<B>) -> Tensor<B, 2>;
+    fn to_dense(&self, a: &SparseTensor<B>) -> Tensor<B, 2>;
 
     // ===== Capability Query =====
 
     /// Check if backend supports a sparse format
-    fn supports(format: SparseFormat) -> KernelSupport;
+    fn supports(&self, format: SparseFormat) -> KernelSupport;
 }

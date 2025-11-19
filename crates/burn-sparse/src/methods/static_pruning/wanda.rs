@@ -201,7 +201,7 @@ impl<B: Backend> Wanda<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::primitives::CalibrationData;
+    use crate::core::CalibrationData;
     use crate::TestBackend as TB;
 
     fn create_test_data() -> (Tensor<TB, 2>, CalibrationData<TB>) {
