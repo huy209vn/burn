@@ -13,6 +13,7 @@ pub mod error;
 pub mod format;
 pub mod mask;
 pub mod sparse_tensor;
+// pub mod sparse_tensor_param;  // TODO: Complete Module integration
 pub mod stats;
 pub mod utils;
 pub mod validate;
@@ -23,4 +24,5 @@ pub use error::{SparseError, SparseResult};
 pub use format::SparseFormat;
 pub use mask::SparseMask;
 pub use sparse_tensor::{SparseTensor, SparseTensorData};
+// pub use sparse_tensor_param::SparseParam;  // TODO
 pub use stats::ActivationStats;

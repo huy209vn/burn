@@ -418,6 +418,227 @@ impl<B: Backend> SparseTensor<B> {
     pub(crate) fn data(&self) -> &SparseTensorData<B> {
         &self.data
     }
+
+    /// Construct from raw components (internal use for Module system)
+    pub(crate) fn from_data(
+        data: SparseTensorData<B>,
+        format: SparseFormat,
+        shape: [usize; 2],
+        device: B::Device,
+    ) -> Self {
+        Self {
+            format,
+            shape,
+            data,
+            device,
+        }
+    }
+
+    /// Move to a different device
+    pub fn to_device(&self, device: &B::Device) -> Self {
+        let data = match &self.data {
+            SparseTensorData::Mask { mask, values } => SparseTensorData::Mask {
+                mask: mask.clone().to_device(device),
+                values: values.clone().to_device(device),
+            },
+            SparseTensorData::CSR {
+                values,
+                col_indices,
+                row_pointers,
+            } => SparseTensorData::CSR {
+                values: values.clone().to_device(device),
+                col_indices: col_indices.clone().to_device(device),
+                row_pointers: row_pointers.clone().to_device(device),
+            },
+            SparseTensorData::CSC {
+                values,
+                row_indices,
+                col_pointers,
+            } => SparseTensorData::CSC {
+                values: values.clone().to_device(device),
+                row_indices: row_indices.clone().to_device(device),
+                col_pointers: col_pointers.clone().to_device(device),
+            },
+            SparseTensorData::COO {
+                values,
+                row_indices,
+                col_indices,
+            } => SparseTensorData::COO {
+                values: values.clone().to_device(device),
+                row_indices: row_indices.clone().to_device(device),
+                col_indices: col_indices.clone().to_device(device),
+            },
+            SparseTensorData::BlockCSR {
+                blocks,
+                block_col_indices,
+                block_row_pointers,
+                block_size,
+            } => SparseTensorData::BlockCSR {
+                blocks: blocks.clone().to_device(device),
+                block_col_indices: block_col_indices.clone().to_device(device),
+                block_row_pointers: block_row_pointers.clone().to_device(device),
+                block_size: *block_size,
+            },
+            SparseTensorData::NInM {
+                values,
+                metadata,
+                n,
+                m,
+            } => SparseTensorData::NInM {
+                values: values.clone().to_device(device),
+                metadata: metadata.clone().to_device(device),
+                n: *n,
+                m: *m,
+            },
+        };
+
+        Self {
+            format: self.format,
+            shape: self.shape,
+            data,
+            device: device.clone(),
+        }
+    }
+
+    /// Detach from autodiff graph
+    pub fn detach(self) -> Self {
+        let data = match self.data {
+            SparseTensorData::Mask { mask, values } => SparseTensorData::Mask {
+                mask,
+                values: values.detach(),
+            },
+            SparseTensorData::CSR {
+                values,
+                col_indices,
+                row_pointers,
+            } => SparseTensorData::CSR {
+                values: values.detach(),
+                col_indices,
+                row_pointers,
+            },
+            SparseTensorData::CSC {
+                values,
+                row_indices,
+                col_pointers,
+            } => SparseTensorData::CSC {
+                values: values.detach(),
+                row_indices,
+                col_pointers,
+            },
+            SparseTensorData::COO {
+                values,
+                row_indices,
+                col_indices,
+            } => SparseTensorData::COO {
+                values: values.detach(),
+                row_indices,
+                col_indices,
+            },
+            SparseTensorData::BlockCSR {
+                blocks,
+                block_col_indices,
+                block_row_pointers,
+                block_size,
+            } => SparseTensorData::BlockCSR {
+                blocks: blocks.detach(),
+                block_col_indices,
+                block_row_pointers,
+                block_size,
+            },
+            SparseTensorData::NInM {
+                values,
+                metadata,
+                n,
+                m,
+            } => SparseTensorData::NInM {
+                values: values.detach(),
+                metadata,
+                n,
+                m,
+            },
+        };
+
+        Self {
+            format: self.format,
+            shape: self.shape,
+            data,
+            device: self.device,
+        }
+    }
+
+    /// Mark values as requiring gradients
+    pub fn require_grad(self) -> Self {
+        self.set_require_grad(true)
+    }
+}
+
+// Autodiff backend support
+impl<B: burn_core::tensor::backend::AutodiffBackend> SparseTensor<B> {
+    /// Get inner backend tensor (for validation mode)
+    pub fn inner(self) -> SparseTensor<B::InnerBackend> {
+        let data = match self.data {
+            SparseTensorData::Mask { mask, values } => SparseTensorData::Mask {
+                mask: mask.inner(),
+                values: values.inner(),
+            },
+            SparseTensorData::CSR {
+                values,
+                col_indices,
+                row_pointers,
+            } => SparseTensorData::CSR {
+                values: values.inner(),
+                col_indices: col_indices.inner(),
+                row_pointers: row_pointers.inner(),
+            },
+            SparseTensorData::CSC {
+                values,
+                row_indices,
+                col_pointers,
+            } => SparseTensorData::CSC {
+                values: values.inner(),
+                row_indices: row_indices.inner(),
+                col_pointers: col_pointers.inner(),
+            },
+            SparseTensorData::COO {
+                values,
+                row_indices,
+                col_indices,
+            } => SparseTensorData::COO {
+                values: values.inner(),
+                row_indices: row_indices.inner(),
+                col_indices: col_indices.inner(),
+            },
+            SparseTensorData::BlockCSR {
+                blocks,
+                block_col_indices,
+                block_row_pointers,
+                block_size,
+            } => SparseTensorData::BlockCSR {
+                blocks: blocks.inner(),
+                block_col_indices: block_col_indices.inner(),
+                block_row_pointers: block_row_pointers.inner(),
+                block_size,
+            },
+            SparseTensorData::NInM {
+                values,
+                metadata,
+                n,
+                m,
+            } => SparseTensorData::NInM {
+                values: values.inner(),
+                metadata: metadata.inner(),
+                n,
+                m,
+            },
+        };
+
+        SparseTensor {
+            format: self.format,
+            shape: self.shape,
+            data,
+            device: self.device,
+        }
+    }
 }
 
 // Parameter trait implementation - enables SparseTensor to be used in Param<SparseTensor<B>>
