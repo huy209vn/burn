@@ -85,6 +85,12 @@ pub mod core;
 /// - CPU/CUDA/WGPU implementations
 pub mod kernel;
 
+/// Autodiff-aware sparse operations
+///
+/// - SpMM with gradient registration
+/// - Sparse transpose matmul
+pub mod ops;
+
 /// Neural network modules
 ///
 /// - SparseLinear

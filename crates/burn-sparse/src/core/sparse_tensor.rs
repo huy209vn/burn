@@ -207,6 +207,53 @@ impl<B: Backend> SparseTensor<B> {
         sparse
     }
 
+    /// Create sparse tensor from CSC format components
+    ///
+    /// # Arguments
+    /// * `values` - Non-zero values [nnz]
+    /// * `row_indices` - Row indices [nnz]
+    /// * `col_pointers` - Column pointers [n_cols + 1]
+    /// * `shape` - Tensor shape [n_rows, n_cols]
+    /// * `device` - Device location
+    ///
+    /// # Panics
+    /// Panics if CSC data is invalid
+    ///
+    /// # Example
+    /// ```ignore
+    /// use burn_sparse::core::SparseTensor;
+    ///
+    /// let values = Tensor::from_data([1.0, 2.0, 3.0]);
+    /// let row_indices = Tensor::from_data([0, 1, 0]);
+    /// let col_pointers = Tensor::from_data([0, 2, 3]);
+    /// let sparse = SparseTensor::from_csc(values, row_indices, col_pointers, [2, 3], device);
+    /// ```
+    pub fn from_csc(
+        values: Tensor<B, 1>,
+        row_indices: Tensor<B, 1, Int>,
+        col_pointers: Tensor<B, 1, Int>,
+        shape: [usize; 2],
+        device: B::Device,
+    ) -> Self {
+        let data = SparseTensorData::CSC {
+            values,
+            row_indices,
+            col_pointers,
+        };
+
+        let sparse = Self {
+            format: SparseFormat::CSC,
+            shape,
+            data,
+            device,
+        };
+
+        // Validate construction
+        sparse.validate().expect("CSC tensor construction created invalid structure");
+
+        sparse
+    }
+
     /// Create sparse tensor from SparseMask and dense weights
     ///
     /// This converts the algorithm-layer mask to execution-layer CSR format.
@@ -301,6 +348,60 @@ impl<B: Backend> SparseTensor<B> {
         let total = self.shape[0] * self.shape[1];
         let nnz = self.nnz();
         1.0 - (nnz as f32 / total as f32)
+    }
+
+    /// Transpose the sparse matrix
+    ///
+    /// Returns a new sparse tensor with transposed shape.
+    /// For CSR → CSC conversion (and vice versa) which effectively transposes.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let sparse_t = sparse.transpose()?;
+    /// assert_eq!(sparse.shape(), [m, n]);
+    /// assert_eq!(sparse_t.shape(), [n, m]);
+    /// ```
+    pub fn transpose(&self) -> SparseResult<Self> {
+        use crate::core::SparseFormat;
+
+        match self.format {
+            SparseFormat::CSR => {
+                // CSR → CSC = transpose
+                self.to_format(SparseFormat::CSC)
+            }
+            SparseFormat::CSC => {
+                // CSC → CSR = transpose
+                self.to_format(SparseFormat::CSR)
+            }
+            SparseFormat::COO => {
+                // For COO, swap row and column indices
+                match &self.data {
+                    SparseTensorData::COO {
+                        values,
+                        row_indices,
+                        col_indices,
+                    } => {
+                        // Swap row <-> col and shape
+                        let transposed_shape = [self.shape[1], self.shape[0]];
+                        Ok(SparseTensor {
+                            format: SparseFormat::COO,
+                            shape: transposed_shape,
+                            data: SparseTensorData::COO {
+                                values: values.clone(),
+                                row_indices: col_indices.clone(),
+                                col_indices: row_indices.clone(),
+                            },
+                            device: self.device.clone(),
+                        })
+                    }
+                    _ => unreachable!("COO format must have COO data"),
+                }
+            }
+            _ => Err(SparseError::UnsupportedOperation {
+                operation: format!("transpose for format {:?}", self.format),
+                backend: "generic".to_string(),
+            }),
+        }
     }
 
     // ============================================================================

@@ -116,12 +116,11 @@ fn from_csr<B: Backend>(csr: &SparseTensor<B>, target: SparseFormat) -> SparseRe
             Ok(csr.clone())
         }
         SparseFormat::CSC => {
-            // TODO: Implement CSR → CSC
-            Err(SparseError::ConversionFailed {
-                from: SparseFormat::CSR,
-                to: target,
-                reason: "CSR → CSC not yet implemented".to_string(),
-            })
+            if let SparseTensorData::CSR { values, col_indices, row_pointers } = csr.data() {
+                csr_to_csc(values, col_indices, row_pointers, csr.shape(), &csr.device())
+            } else {
+                unreachable!("CSR should have CSR data")
+            }
         }
         SparseFormat::COO => {
             if let SparseTensorData::CSR { values, col_indices, row_pointers } = csr.data() {
@@ -398,6 +397,85 @@ fn csc_to_csr<B: Backend>(
         csr_col_indices_tensor,
         csr_row_pointers_tensor,
         shape,
+        device.clone(),
+    ))
+}
+
+/// Convert CSR to CSC (transpose operation)
+fn csr_to_csc<B: Backend>(
+    values: &Tensor<B, 1>,
+    col_indices: &Tensor<B, 1, Int>,
+    row_pointers: &Tensor<B, 1, Int>,
+    shape: [usize; 2],
+    device: &B::Device,
+) -> SparseResult<SparseTensor<B>> {
+    // Direct CSR → CSC conversion (matrix transpose)
+    // Algorithm: Build CSC by iterating through CSR rows
+    // CSC(M^T) has: col_pointers, row_indices, values
+    // Where col_pointers[i] = # elements in column i (which was row i in CSR)
+
+    let [n_rows, n_cols] = shape;
+    let nnz = values.dims()[0];
+
+    // Move to CPU for processing
+    let val_data: Vec<f32> = values.to_data().to_vec().unwrap();
+    let col_data: Vec<i64> = col_indices.to_data().convert::<i64>().to_vec().unwrap();
+    let row_ptr_data: Vec<i64> = row_pointers.to_data().convert::<i64>().to_vec().unwrap();
+
+    // For CSR → CSC transpose:
+    // - Original CSR has shape [n_rows, n_cols]
+    // - Transposed CSC has shape [n_cols, n_rows]
+    // - CSC col_pointers corresponds to the TRANSPOSED columns (which were rows)
+    // - So col_pointers has length n_rows + 1 (not n_cols + 1)
+
+    // Step 1: Count elements per original row (which becomes column in transpose)
+    let mut col_counts = vec![0usize; n_rows];
+    for row in 0..n_rows {
+        let row_start = row_ptr_data[row] as usize;
+        let row_end = row_ptr_data[row + 1] as usize;
+        col_counts[row] = row_end - row_start;
+    }
+
+    // Step 2: Build column pointers for transposed matrix
+    let mut col_pointers = vec![0i64; n_rows + 1];
+    for i in 0..n_rows {
+        col_pointers[i + 1] = col_pointers[i] + col_counts[i] as i64;
+    }
+
+    // Step 3: Place elements in CSC format
+    // Each CSR row becomes a CSC column, so we place elements column by column
+    let mut csc_values = vec![0.0f32; nnz];
+    let mut csc_row_indices = vec![0i64; nnz];
+
+    // Iterate through CSR rows (which become CSC columns)
+    for row in 0..n_rows {
+        let row_start = row_ptr_data[row] as usize;
+        let row_end = row_ptr_data[row + 1] as usize;
+        let col_start = col_pointers[row] as usize;  // This row becomes this column
+
+        for (offset, idx) in (row_start..row_end).enumerate() {
+            let col = col_data[idx] as usize;  // Original column becomes new row
+            let val = val_data[idx];
+
+            let pos = col_start + offset;
+            csc_values[pos] = val;
+            csc_row_indices[pos] = col as i64;  // Original col becomes new row
+        }
+    }
+
+    // Convert to tensors
+    let csc_values_tensor = Tensor::<B, 1>::from_data(TensorData::new(csc_values, [nnz]), device);
+    let csc_row_indices_tensor = Tensor::<B, 1, Int>::from_data(TensorData::new(csc_row_indices, Shape::new([nnz])), device);
+    let csc_col_pointers_tensor = Tensor::<B, 1, Int>::from_data(TensorData::new(col_pointers, Shape::new([n_rows + 1])), device);
+
+    // Transposed shape: [n_cols, n_rows]
+    let transposed_shape = [n_cols, n_rows];
+
+    Ok(SparseTensor::from_csc(
+        csc_values_tensor,
+        csc_row_indices_tensor,
+        csc_col_pointers_tensor,
+        transposed_shape,
         device.clone(),
     ))
 }
