@@ -159,7 +159,15 @@ pub(crate) fn mask_to_csr<B: Backend>(
     let [n_rows, n_cols] = shape;
 
     // Move data to CPU for processing
-    let mask_data: Vec<bool> = mask.clone().into_data().to_vec().unwrap();
+    // Convert Bool -> Int -> Vec<i64> -> Vec<bool> for backend compatibility
+    let mask_int_values: Vec<i64> = mask
+        .clone()
+        .int()
+        .into_data()
+        .convert::<i64>()
+        .to_vec()
+        .unwrap();
+    let mask_data: Vec<bool> = mask_int_values.iter().map(|&x| x != 0).collect();
     let values_data: Vec<f32> = values.clone().into_data().to_vec().unwrap();
 
     // Build CSR format on CPU

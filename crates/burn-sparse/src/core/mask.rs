@@ -75,8 +75,16 @@ impl<B: Backend> SparseMask<B> {
     pub fn from_tensor(mask: Tensor<B, 2, Bool>) -> Self {
         let shape = mask.dims();
         let device = mask.device();
-        let mask_data = mask.clone().into_data();
-        let mask_values: Vec<bool> = mask_data.to_vec().unwrap();
+
+        // Convert Bool -> Int -> Vec<i64> -> Vec<bool> for backend compatibility
+        let mask_int_values: Vec<i64> = mask
+            .clone()
+            .int()
+            .into_data()
+            .convert::<i64>()
+            .to_vec()
+            .unwrap();
+        let mask_values: Vec<bool> = mask_int_values.iter().map(|&x| x != 0).collect();
 
         let mut active = Vec::new();
         let mut pruned = Vec::new();
