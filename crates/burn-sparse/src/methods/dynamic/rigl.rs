@@ -78,60 +78,58 @@ impl<B: Backend> RigL<B> {
 
     /// Update mask based on gradients (call every training step)
     ///
+    /// RigL algorithm:
+    /// - Prune: Remove bottom-k active weights by **magnitude |W|**
+    /// - Grow: Add top-k zero positions by **gradient |g|**
+    ///
     /// # Arguments
+    /// * `weights` - Current weight values [n_out, n_in]
     /// * `gradients` - Weight gradients [n_out, n_in]
     ///
     /// # Returns
     /// Updated mask (may be same as before if not at update frequency)
-    pub fn update_mask(&mut self, gradients: &Tensor<B, 2>) -> SparseMask<B> {
-        // Step 1: Accumulate gradient magnitudes
-        let grad_mag = gradients.clone().abs();
-
-        self.grad_accumulator = Some(match self.grad_accumulator.take() {
-            Some(acc) => acc + grad_mag,
-            None => grad_mag,
-        });
-
+    pub fn update_mask(&mut self, weights: &Tensor<B, 2>, gradients: &Tensor<B, 2>) -> SparseMask<B> {
         self.step_count += 1;
 
-        // Step 2: Check if it's time to update
+        // Check if it's time to update
         if self.step_count % self.config.update_frequency != 0 {
             return self.mask.clone();
         }
 
-        // Step 3: Perform mask update
-        let accumulated_grads = self.grad_accumulator.take().unwrap();
-
         // Get current mask as tensor
-        let mask_tensor = self.mask.to_tensor();
+        let mask_tensor = self.mask.tensor();
         let device = mask_tensor.device();
-        let shape = mask_tensor.shape().dims;
+        let shape = self.mask.shape();
 
-        // Flatten for easier indexing
-        let grads_flat = accumulated_grads.reshape([shape[0] * shape[1]]);
-        let mask_flat = mask_tensor.reshape([shape[0] * shape[1]]).float();
+        // Compute scores (keep as 2D for topk/bottomk functions)
+        let weights_abs = weights.clone().abs();
+        let grads_abs = gradients.clone().abs();
+        let mask_float = mask_tensor.clone().float();
 
-        // Compute number of weights to drop and grow
-        let n_active = self.mask.count_active();
+        // Compute number of weights to rewire
+        let n_active = self.mask.n_active();
         let k = (n_active as f32 * self.config.drop_fraction) as usize;
 
         if k == 0 {
             return self.mask.clone();
         }
 
-        // Compute scores for active and pruned weights
-        // Active weights: multiply grads by mask (zeros out pruned)
-        // Pruned weights: multiply grads by (1 - mask) (zeros out active)
-        let active_scores = grads_flat.clone().mul(mask_flat.clone());
-        let pruned_scores = grads_flat.mul(mask_flat.clone().neg().add_scalar(1.0));
+        // RigL spec: Prune by MAGNITUDE (not gradient!)
+        // Active weights: multiply |W| by mask (zeros out pruned)
+        let active_magnitudes = weights_abs.clone().mul(mask_float.clone());
 
-        // Find bottom-k active weights (smallest gradient magnitudes)
-        let drop_indices = crate::core::utils::bottomk_indices(&active_scores, k);
+        // RigL spec: Grow by GRADIENT
+        // Pruned weights: multiply |g| by (1 - mask) (zeros out active)
+        let pruned_gradients = grads_abs.mul(mask_float.clone().neg().add_scalar(1.0));
 
-        // Find top-k pruned weights (largest gradient magnitudes)
-        let grow_indices = crate::core::utils::topk_indices(&pruned_scores, k);
+        // Find bottom-k active weights (smallest magnitudes)
+        let drop_indices = crate::core::utils::bottomk_indices(&active_magnitudes, k);
+
+        // Find top-k pruned weights (largest gradients)
+        let grow_indices = crate::core::utils::topk_indices(&pruned_gradients, k);
 
         // Create new mask: start with current mask, flip the selected indices
+        let mask_flat = mask_float.reshape([shape[0] * shape[1]]);
         let mut new_mask_data = mask_flat.to_data().to_vec::<f32>().unwrap();
 
         // Drop selected active weights
@@ -145,15 +143,13 @@ impl<B: Backend> RigL<B> {
         }
 
         // Reshape back to original shape and convert to Bool
-        let new_mask_tensor = Tensor::<B, 1>::from_data(new_mask_data, &device)
+        use burn_core::tensor::TensorData;
+        let new_mask_tensor = Tensor::<B, 1>::from_data(TensorData::new(new_mask_data, [shape[0] * shape[1]]), &device)
             .reshape(shape)
             .greater_elem(0.5);
 
         // Create new mask
         self.mask = SparseMask::from_tensor(new_mask_tensor);
-
-        // Reset accumulator for next cycle
-        self.grad_accumulator = None;
 
         self.mask.clone()
     }
