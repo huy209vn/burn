@@ -40,33 +40,99 @@
 //!
 //! ## Quick Start
 //!
+//! ### One-Shot Pruning (Wanda)
+//!
 //! ```rust,ignore
 //! use burn_sparse::prelude::*;
 //!
-//! // 1. Prune with Wanda (static, one-shot)
-//! let mask = Wanda::new(config).prune(&weights, &calibration_data);
+//! // Collect calibration data from your dataset
+//! let calibration_data = CalibrationData::from_samples(activation_samples);
 //!
-//! // 2. Refine with DSnoT (iterative, mask optimization)
-//! let refined_mask = DSnoT::new(config).refine(&weights, &mask, &calibration_data);
+//! // Configure and run Wanda pruning
+//! let config = WandaConfig {
+//!     sparsity: 0.9,           // 90% sparsity
+//!     n_calibration: 128,      // Calibration samples
+//!     use_l2: true,            // L2 norm for activations
+//! };
+//! let mut wanda = Wanda::new(config);
+//! let sparse_mask = wanda.prune(&weights, &calibration_data);
 //!
-//! // 3. Convert to execution format
-//! let sparse_tensor = refined_mask.to_sparse_tensor(&weights, SparseFormat::CSR);
+//! // Apply mask to weights
+//! let sparse_weights = sparse_mask.apply(&weights);
+//! ```
 //!
-//! // 4. Use in neural network
-//! let sparse_linear = SparseLinear::from_mask(d_in, d_out, refined_mask, format);
+//! ### Dynamic Sparse Training (RigL)
+//!
+//! ```rust,ignore
+//! use burn_sparse::methods::dynamic::rigl::{RigL, RigLConfig};
+//!
+//! // Initialize RigL
+//! let config = RigLConfig {
+//!     sparsity: 0.9,           // 90% sparsity
+//!     update_frequency: 100,   // Update mask every 100 steps
+//!     drop_fraction: 0.3,      // Drop 30% of active weights
+//! };
+//! let mut rigl = RigL::new(config, initial_mask);
+//!
+//! // In training loop:
+//! for step in 0..total_steps {
+//!     let loss = forward_and_loss(&model, &batch);
+//!     let grads = loss.backward();
+//!
+//!     // Update mask with RigL
+//!     if step % config.update_frequency == 0 {
+//!         let new_mask = rigl.update_mask(&weights, &gradients);
+//!         // Apply new mask to model
+//!     }
+//!
+//!     optimizer.step(&grads);
+//! }
+//! ```
+//!
+//! ### Dynamic Sparse Training (MEST)
+//!
+//! ```rust,ignore
+//! use burn_sparse::methods::dynamic::mest::{Mest, MestConfig};
+//!
+//! // Initialize MEST with elastic decay
+//! let config = MestConfig {
+//!     sparsity: 0.9,
+//!     mutation_rate_init: 0.3, // Start with 30% mutation
+//!     mutation_rate_final: 0.05, // Decay to 5%
+//!     lambda: 0.01,            // Gradient weight in salience
+//!     use_gradient_ema: true,  // Smooth gradients with EMA
+//!     ema_decay: 0.9,
+//! };
+//! let mut mest = Mest::new(config, initial_mask, total_steps);
+//!
+//! // MEST updates every step (no update_frequency)
+//! for step in 0..total_steps {
+//!     let loss = forward_and_loss(&model, &batch);
+//!     let grads = loss.backward();
+//!
+//!     let new_mask = mest.update_mask(&weights, &gradients);
+//!     optimizer.step(&grads);
+//! }
 //! ```
 //!
 //! ## Examples
 //!
-//! - `pruning_cycle.rs` - Wanda + DSnoT workflow
-//! - `benchmark_spmm.rs` - Sparse kernel performance
+//! See `examples/` directory for complete working code:
+//! - `rigl_training.rs` - RigL dynamic sparse training
+//! - `mest_training.rs` - MEST with elastic decay
+//! - `wanda_pruning.rs` - One-shot pruning workflow
 //!
-//! ## Phase Status
+//! Run with: `cargo run --example <name>`
 //!
-//! - ✅ **Phase 0**: Architecture design
-//! - 🚧 **Phase 1**: Core + CPU (in progress)
-//! - ⏳ **Phase 2**: GPU kernels (planned)
-//! - ⏳ **Phase 3**: Dynamic training (planned)
+//! ## Implementation Status
+//!
+//! - ✅ **Core Infrastructure**: Formats (CSR/COO/Mask), conversions, validation
+//! - ✅ **Static Pruning**: Wanda, Magnitude
+//! - ✅ **Iterative Refinement**: DSnoT
+//! - ✅ **Dynamic Training**: RigL, MEST
+//! - ✅ **Neural Network**: SparseLinear with autodiff
+//! - ✅ **Cross-backend**: NdArray, CUDA compatibility
+//! - ⏳ **GPU Kernels**: Will use CubeCL (planned)
 
 extern crate alloc;
 
