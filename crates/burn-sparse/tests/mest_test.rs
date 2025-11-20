@@ -1,11 +1,14 @@
 //! Tests for MEST dynamic sparse training
-
+use burn_core as burn;
 use burn::tensor::Tensor;
 use burn_ndarray::NdArray;
 use burn_sparse::prelude::*;
 
 type TestBackend = NdArray<f32>;
 
+#[cfg(all(test, feature = "test-cuda"))]
+/// Backend for test cases
+pub type B = burn_cuda::Cuda;
 #[test]
 fn test_mest_uses_salience_for_both_prune_and_grow() {
     let device = Default::default();
