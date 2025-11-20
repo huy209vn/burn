@@ -594,11 +594,11 @@ mod tests {
                 assert_eq!(vals, vec![1.0, 2.0, 3.0, 4.0, 5.0]);
 
                 // Check col_indices
-                let cols: Vec<i64> = col_indices.clone().into_data().to_vec().unwrap();
+                let cols: Vec<i64> = col_indices.clone().into_data().convert::<i64>().to_vec().unwrap();
                 assert_eq!(cols, vec![0, 2, 1, 0, 2]);
 
                 // Check row_pointers
-                let ptrs: Vec<i64> = row_pointers.clone().into_data().to_vec().unwrap();
+                let ptrs: Vec<i64> = row_pointers.clone().into_data().convert::<i64>().to_vec().unwrap();
                 assert_eq!(ptrs, vec![0, 2, 3, 5]);
             }
             _ => panic!("Expected CSR format"),
@@ -637,7 +637,7 @@ mod tests {
 
         match csr.data() {
             SparseTensorData::CSR { row_pointers, .. } => {
-                let ptrs: Vec<i64> = row_pointers.clone().into_data().to_vec().unwrap();
+                let ptrs: Vec<i64> = row_pointers.clone().into_data().convert::<i64>().to_vec().unwrap();
                 // Empty row 1 should have same pointer value
                 assert_eq!(ptrs, vec![0, 2, 2, 4]);
             }
