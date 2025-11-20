@@ -3,16 +3,15 @@
 //! This example demonstrates how to use Wanda (activation-weighted magnitude pruning)
 //! to create a sparse neural network from a pretrained dense model.
 //!
-//! Run with: cargo run --example wanda_pruning
+//! Run with: cargo run --example wanda_pruning --features cuda
 
-use burn::backend::NdArray;
-use burn::module::{Module, Param};
 use burn::tensor::{backend::Backend, Tensor};
+use burn_cuda::CudaBackend;
 use burn_sparse::core::CalibrationData;
 use burn_sparse::methods::static_pruning::wanda::{Wanda, WandaConfig};
 use burn_sparse::nn::{SparseLinear, SparseLinearConfig};
 
-type B = NdArray<f32>;
+type B = CudaBackend;
 
 fn main() {
     println!("=== Wanda One-Shot Pruning Example ===\n");
@@ -76,11 +75,10 @@ fn main() {
 
     // Step 4: Create sparse model
     println!("\nStep 4: Creating sparse model...");
-    let sparse_weights = sparse_mask.apply(&dense_weights);
 
     // Create sparse linear layer
     let config = SparseLinearConfig::new(input_size, hidden_size);
-    let sparse_layer = config.init_with(&device, dense_weights, Some(sparse_mask));
+    let sparse_layer: SparseLinear<B> = config.init_with_mask(&device, sparse_mask.clone());
 
     println!("  Sparse model created successfully");
 
