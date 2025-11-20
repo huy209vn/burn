@@ -80,16 +80,9 @@ pub mod core;
 
 /// Backend kernel dispatch
 ///
-/// - SparseKernel trait
-/// - Capability routing
-/// - CPU/CUDA/WGPU implementations
+/// - Dense fallback for now
+/// - Real sparse kernels will use CubeCL
 pub mod kernel;
-
-/// Autodiff-aware sparse operations
-///
-/// - SpMM with gradient registration
-/// - Sparse transpose matmul
-pub mod ops;
 
 /// Neural network modules
 ///

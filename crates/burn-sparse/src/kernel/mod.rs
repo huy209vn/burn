@@ -1,14 +1,9 @@
-/// Backend kernel dispatch for sparse operations
+/// Sparse operation dispatch
 ///
-/// This module provides:
-/// - SparseKernel trait that all backends implement
-/// - Capability-based dispatch with fallbacks
-/// - Backend-specific implementations (CPU, CUDA, WGPU)
+/// For now, all operations use dense fallback.
+/// Real sparse kernels will be implemented with CubeCL for GPU acceleration.
 
-pub mod api;
-pub mod cpu;
 pub mod dispatch;
 
 // Re-exports
-pub use api::{KernelSupport, SparseKernel};
 pub use dispatch::{SparseConfig, SparseDispatch};
