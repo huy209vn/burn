@@ -134,8 +134,10 @@ impl DSnoT {
 
         // Use subset of calibration data
         let n_use = self.config.n_calibration.min(data.len());
-        let samples: Vec<_> = (0..n_use)
-            .map(|i| data.samples().clone().slice([i..i + 1]))
+        let samples: Vec<_> = data
+            .iter()
+            .take(n_use)
+            .map(|s| s.unsqueeze_dim(0)) // [n_in] -> [1, n_in]
             .collect();
 
         // Start with initial mask
@@ -273,7 +275,7 @@ impl DSnoT {
         let grow_mean = grow_stack.clone().mean_dim(0).squeeze::<2>(); // [n_out, n_in]
         let grow_var = grow_stack
             .clone()
-            .sub(grow_mean.clone().unsqueeze())
+            .sub(grow_mean.clone().unsqueeze_dim(0))
             .powf_scalar(2.0)
             .mean_dim(0)
             .squeeze::<2>(); // [n_out, n_in]

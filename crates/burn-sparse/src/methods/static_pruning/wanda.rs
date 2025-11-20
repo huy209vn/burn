@@ -102,7 +102,7 @@ impl<B: Backend> Wanda<B> {
         // Convert to vector of 2D tensors for ActivationStats
         let samples: Vec<Tensor<B, 2>> = subset
             .iter()
-            .map(|sample| sample.unsqueeze()) // [n_features] -> [1, n_features]
+            .map(|sample| sample.unsqueeze_dim(0)) // [n_features] -> [1, n_features]
             .collect();
 
         self.activation_stats = Some(ActivationStats::from_samples(&samples));
@@ -140,7 +140,7 @@ impl<B: Backend> Wanda<B> {
 
         // Broadcast multiply: [n_out, n_in] * [n_in] -> [n_out, n_in]
         // norms needs to be unsqueezed to [1, n_in] for broadcasting
-        abs_weights * norms.unsqueeze()
+        abs_weights * norms.unsqueeze_dim(0)
     }
 
     /// Create sparse mask from importance scores.

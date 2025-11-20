@@ -115,17 +115,26 @@ impl<B: Backend> RigL<B> {
         }
 
         // RigL spec: Prune by MAGNITUDE (not gradient!)
-        // Active weights: multiply |W| by mask (zeros out pruned)
-        let active_magnitudes = weights_abs.clone().mul(mask_float.clone());
+        // For bottomk: set pruned positions to +inf (never selected as "smallest")
+        // For topk: set active positions to -inf (never selected as "largest")
+        let pos_inf = 1e10f32;
+        let neg_inf = -1e10f32;
+
+        let active_magnitudes = weights_abs.clone()
+            .mul(mask_float.clone())
+            .add(mask_float.clone().neg().add_scalar(1.0).mul_scalar(pos_inf));
 
         // RigL spec: Grow by GRADIENT
-        // Pruned weights: multiply |g| by (1 - mask) (zeros out active)
-        let pruned_gradients = grads_abs.mul(mask_float.clone().neg().add_scalar(1.0));
+        let pruned_gradients = grads_abs
+            .mul(mask_float.clone().neg().add_scalar(1.0))
+            .add(mask_float.clone().mul_scalar(neg_inf));
 
         // Find bottom-k active weights (smallest magnitudes)
+        // bottomk will skip the +inf values from pruned positions
         let drop_indices = crate::core::utils::bottomk_indices(&active_magnitudes, k);
 
         // Find top-k pruned weights (largest gradients)
+        // topk will skip the -inf values from active positions
         let grow_indices = crate::core::utils::topk_indices(&pruned_gradients, k);
 
         // Create new mask: start with current mask, flip the selected indices

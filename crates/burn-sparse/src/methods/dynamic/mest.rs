@@ -168,16 +168,26 @@ impl<B: Backend> Mest<B> {
         }
 
         // Compute salience for active and pruned weights
-        // Active weights: multiply salience by mask (zeros out pruned)
-        let active_salience = salience.clone().mul(mask_float.clone());
+        // We need to mask salience values to avoid selecting from wrong set
+        // For bottomk (smallest): set pruned positions to +inf (never selected as "smallest")
+        // For topk (largest): set active positions to -inf (never selected as "largest")
+        let pos_inf = 1e10f32;
+        let neg_inf = -1e10f32;
 
-        // Pruned weights: multiply salience by (1 - mask) (zeros out active)
-        let pruned_salience = salience.mul(mask_float.clone().neg().add_scalar(1.0));
+        let active_salience = salience.clone()
+            .mul(mask_float.clone())
+            .add(mask_float.clone().neg().add_scalar(1.0).mul_scalar(pos_inf));
+
+        let pruned_salience = salience
+            .mul(mask_float.clone().neg().add_scalar(1.0))
+            .add(mask_float.clone().mul_scalar(neg_inf));
 
         // Find bottom-k active weights (smallest salience)
+        // bottomk will skip the +inf values from pruned positions
         let drop_indices = crate::core::utils::bottomk_indices(&active_salience, k);
 
         // Find top-k pruned weights (largest salience)
+        // topk will skip the -inf values from active positions
         let grow_indices = crate::core::utils::topk_indices(&pruned_salience, k);
 
         // Create new mask: start with current mask, flip the selected indices
