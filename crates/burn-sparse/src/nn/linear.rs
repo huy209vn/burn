@@ -7,7 +7,7 @@ use burn::{
 };
 
 use crate::core::{SparseFormat, SparseMask, SparseParam, SparseTensor};
-use crate::kernel::{SparseConfig, SparseDispatch};
+use crate::backend::{SparseConfig, SparseDispatch};
 
 /// Sparse linear layer: Y = W_sparse @ X + b
 ///

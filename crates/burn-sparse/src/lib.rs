@@ -148,7 +148,7 @@ pub mod core;
 ///
 /// - Dense fallback for now
 /// - Real sparse kernels will use CubeCL
-pub mod kernel;
+pub mod backend;
 
 /// Neural network modules
 ///
@@ -173,6 +173,7 @@ pub mod methods;
 
 /// Experimental features (feature-gated)
 ///
+/// - [`experimental::sparseram`]: Runtime memory tiering (GPU/RAM/Disk)
 /// - N:M structured sparsity (2:4)
 /// - BlockCSR optimization
 #[cfg(feature = "experimental")]
@@ -197,8 +198,8 @@ pub mod prelude {
     pub use crate::methods::iterative::{DSnoT, DSnoTConfig};
     pub use crate::methods::static_pruning::{Magnitude, MagnitudeConfig, Wanda, WandaConfig};
 
-    // Kernel
-    pub use crate::kernel::{SparseConfig, SparseDispatch};
+    // Backend
+    pub use crate::backend::{SparseConfig, SparseDispatch};
 
     // Neural network
     pub use crate::nn::SparseLinear;
