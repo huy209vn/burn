@@ -124,7 +124,6 @@
 pub mod config;
 pub mod convert;
 pub mod error;
-pub mod lifecycle;
 pub mod residency;
 pub mod storage;
 pub mod weight;
@@ -135,7 +134,6 @@ pub mod io;
 // Re-exports for convenient access
 pub use config::{PrunedStorageConfig, SparsePolicy, SparseRAMBuilder, SparseRAMConfig};
 pub use error::{SparseRAMError, SparseRAMResult};
-pub use lifecycle::{LifecycleMode, LifecycleOperation};
 pub use storage::{Block, BlockData, BlockIndexMap, BlockLocation, PrunedStorage, Tier};
 pub use weight::SparseRAMWeight;
 

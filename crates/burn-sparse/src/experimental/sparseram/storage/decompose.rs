@@ -2,7 +2,7 @@
 
 use crate::core::SparseTensor;
 use crate::experimental::sparseram::{
-    error::{SparseRAMError, SparseRAMResult},
+    error::SparseRAMResult,
     storage::{Block, BlockData, BlockLocation},
 };
 use alloc::vec::Vec;

@@ -14,7 +14,7 @@ use burn_core::module::{
 use burn_core::record::{PrecisionSettings, Record};
 use burn_core::tensor::backend::{AutodiffBackend, Backend};
 use burn_core::tensor::ops::Device;
-use burn_core::tensor::{Bool, Int, Tensor, TensorData};
+use burn_core::tensor::{Tensor, TensorData};
 use alloc::{format, string::ToString, vec::Vec};
 use core::ops::{Deref, DerefMut};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};

@@ -4,7 +4,7 @@
 
 use burn_core::tensor::{backend::Backend, Tensor};
 
-use crate::core::{SparseMask, utils};
+use crate::core::SparseMask;
 
 /// Configuration for magnitude pruning
 #[derive(Debug, Clone)]

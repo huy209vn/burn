@@ -4,7 +4,6 @@ use super::ResidencyEngine;
 use crate::core::SparseTensor;
 use crate::experimental::sparseram::error::{SparseRAMError, SparseRAMResult};
 use alloc::collections::VecDeque;
-use alloc::vec::Vec;
 use burn_core::tensor::{backend::Backend, TensorData};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

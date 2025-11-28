@@ -1,7 +1,6 @@
 //! Utility functions for tensor operations.
 
-use burn_core::tensor::{backend::Backend, Bool, Distribution, Int, Shape, Tensor};
-use burn_core::tensor::ops::FloatTensor;
+use burn_core::tensor::{backend::Backend, Tensor};
 use alloc::vec::Vec;
 
 /// Compute percentile of a 2D tensor.

@@ -1,6 +1,6 @@
 //! Configuration and builder API for SparseRAM
 
-use crate::experimental::sparseram::storage::{PrunedStorage, Tier};
+use crate::experimental::sparseram::storage::Tier;
 use core::marker::PhantomData;
 
 #[cfg(feature = "std")]

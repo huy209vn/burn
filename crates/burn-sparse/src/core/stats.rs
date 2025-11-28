@@ -1,6 +1,5 @@
 //! Activation statistics for importance scoring.
 
-use alloc::vec::Vec;
 use burn_core::tensor::{backend::Backend, Tensor};
 
 /// Statistical moments of layer activations.

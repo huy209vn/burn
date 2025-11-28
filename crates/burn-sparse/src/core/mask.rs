@@ -1,7 +1,7 @@
 //! Binary sparsity mask with efficient indexing.
 
 use alloc::vec::Vec;
-use burn_core::tensor::{backend::Backend, Bool, Distribution, Shape, Tensor, TensorData};
+use burn_core::tensor::{backend::Backend, Bool, Shape, Tensor, TensorData};
 use serde::{Deserialize, Serialize};
 
 use super::utils::percentile;

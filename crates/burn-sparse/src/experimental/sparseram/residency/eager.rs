@@ -2,7 +2,7 @@
 
 use super::ResidencyEngine;
 use crate::core::SparseTensor;
-use crate::experimental::sparseram::error::{SparseRAMError, SparseRAMResult};
+use crate::experimental::sparseram::error::SparseRAMResult;
 use burn_core::tensor::backend::Backend;
 
 /// Eager residency engine
@@ -78,15 +78,19 @@ impl<B: Backend> EagerEngine<B> {
     /// - Indices (format-specific overhead)
     fn calculate_vram_usage(sparse: &SparseTensor<B>) -> usize {
         let nnz = sparse.nnz();
+        let shape = sparse.shape();
+        let n_rows = shape[0];
 
         // Values: nnz × 4 bytes (f32)
         let values_bytes = nnz * core::mem::size_of::<f32>();
 
         // Indices: format-specific
-        // CSR: row_ptr (n_rows+1) + col_indices (nnz)
+        // CSR: row_pointers (n_rows+1) + col_indices (nnz)
         // COO: row_indices (nnz) + col_indices (nnz)
-        // Approximate as: nnz × 8 bytes for indices
-        let indices_bytes = nnz * core::mem::size_of::<i32>() * 2;
+        // For CSR (most common):
+        let row_pointers_bytes = (n_rows + 1) * core::mem::size_of::<i32>();
+        let col_indices_bytes = nnz * core::mem::size_of::<i32>();
+        let indices_bytes = row_pointers_bytes + col_indices_bytes;
 
         values_bytes + indices_bytes
     }

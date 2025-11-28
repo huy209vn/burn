@@ -1039,6 +1039,7 @@ dependencies = [
  "burn-tch",
  "burn-wgpu",
  "derive-new",
+ "memmap2",
  "num-traits",
  "rand 0.9.2",
  "rstest",
@@ -4432,6 +4433,15 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
 name = "itertools"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
@@ -6818,6 +6828,17 @@ dependencies = [
 
 [[package]]
 name = "rayon-cond"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "059f538b55efd2309c9794130bc149c6a553db90e9d99c2030785c82f0bd7df9"
+dependencies = [
+ "either",
+ "itertools 0.11.0",
+ "rayon",
+]
+
+[[package]]
+name = "rayon-cond"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2964d0cf57a3e7a06e8183d14a8b527195c706b7983549cd5462d5aa3747438f"
@@ -7077,6 +7098,25 @@ dependencies = [
  "prettyplease 0.1.25",
  "proc-macro2",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "rusta-model"
+version = "0.20.0"
+dependencies = [
+ "anyhow",
+ "burn",
+ "burn-cuda",
+ "burn-import",
+ "burn-sparse",
+ "half",
+ "memmap2",
+ "safetensors 0.4.5",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokenizers 0.20.4",
+ "tracing",
 ]
 
 [[package]]
@@ -8017,7 +8057,7 @@ dependencies = [
  "burn",
  "derive-new",
  "serde",
- "tokenizers",
+ "tokenizers 0.22.1",
 ]
 
 [[package]]
@@ -8028,7 +8068,7 @@ dependencies = [
  "derive-new",
  "log",
  "serde",
- "tokenizers",
+ "tokenizers 0.22.1",
 ]
 
 [[package]]
@@ -8193,6 +8233,37 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokenizers"
+version = "0.20.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b08cc37428a476fc9e20ac850132a513a2e1ce32b6a31addf2b74fa7033b905"
+dependencies = [
+ "aho-corasick",
+ "derive_builder",
+ "esaxx-rs",
+ "getrandom 0.2.16",
+ "itertools 0.12.1",
+ "lazy_static",
+ "log",
+ "macro_rules_attribute",
+ "monostate",
+ "onig",
+ "paste",
+ "rand 0.8.5",
+ "rayon",
+ "rayon-cond 0.3.0",
+ "regex",
+ "regex-syntax",
+ "serde",
+ "serde_json",
+ "spm_precompiled",
+ "thiserror 1.0.69",
+ "unicode-normalization-alignments",
+ "unicode-segmentation",
+ "unicode_categories",
+]
+
+[[package]]
+name = "tokenizers"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6475a27088c98ea96d00b39a9ddfb63780d1ad4cceb6f48374349a96ab2b7842"
@@ -8213,7 +8284,7 @@ dependencies = [
  "paste",
  "rand 0.9.2",
  "rayon",
- "rayon-cond",
+ "rayon-cond 0.4.0",
  "regex",
  "regex-syntax",
  "serde",

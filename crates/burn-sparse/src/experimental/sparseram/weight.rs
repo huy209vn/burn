@@ -2,10 +2,9 @@
 
 use crate::core::{SparseMask, SparseTensor};
 use crate::experimental::sparseram::{
-    config::{PrunedStorageConfig, SparseRAMBuilder, SparseRAMConfig, SparsePolicy},
+    config::{SparseRAMBuilder, SparseRAMConfig, SparsePolicy},
     convert::ConversionPipeline,
     error::{SparseRAMError, SparseRAMResult},
-    lifecycle::{check_lifecycle, LifecycleMode, LifecycleOperation},
     residency::{EagerEngine, ResidencyEngine},
     storage::{PrunedLocation, PrunedStorage},
 };
@@ -83,9 +82,6 @@ pub struct SparseRAMWeight<B: Backend> {
 
     /// Device
     device: B::Device,
-
-    /// Lifecycle mode
-    mode: LifecycleMode,
 }
 
 impl<B: Backend> SparseRAMWeight<B> {
@@ -126,13 +122,6 @@ impl<B: Backend> SparseRAMWeight<B> {
         let pipeline = ConversionPipeline::new(config.clone());
         let (sparse, pruned_storage, shape, device) = pipeline.convert(dense, mask)?;
 
-        // Determine lifecycle mode
-        let mode = if matches!(pruned_storage, PrunedStorage::None) {
-            LifecycleMode::Inference
-        } else {
-            LifecycleMode::Training
-        };
-
         // Create residency engine with SparseTensor
         let residency = Self::create_residency_engine(&config, sparse)?;
 
@@ -146,7 +135,6 @@ impl<B: Backend> SparseRAMWeight<B> {
             pruned_gpu_tensor: None, // Initially no GPU tensor
             residency,
             device,
-            mode,
         })
     }
 
@@ -200,11 +188,6 @@ impl<B: Backend> SparseRAMWeight<B> {
     /// Get device
     pub fn device(&self) -> B::Device {
         self.device.clone()
-    }
-
-    /// Get lifecycle mode
-    pub fn mode(&self) -> LifecycleMode {
-        self.mode
     }
 
     /// Get sparsity (fraction of pruned elements)
@@ -306,8 +289,6 @@ impl<B: Backend> SparseRAMWeight<B> {
     /// # Returns
     /// Output tensor [n_rows, batch_size]
     pub fn forward(&mut self, input: Tensor<B, 2>) -> SparseRAMResult<Tensor<B, 2>> {
-        check_lifecycle(self.mode, LifecycleOperation::SparseInference)?;
-
         // Get sparse tensor (ensures blocks on GPU)
         let sparse = self.residency.get_sparse()?;
 
@@ -336,8 +317,6 @@ impl<B: Backend> SparseRAMWeight<B> {
     /// - In Inference mode (no pruned storage available)
     /// - Pruned values exist but not loaded to GPU
     pub fn to_dense(&mut self) -> SparseRAMResult<Tensor<B, 2>> {
-        check_lifecycle(self.mode, LifecycleOperation::ToDense)?;
-
         // Get active values from SparseTensor (CSR format)
         let sparse = self.residency.get_sparse()?;
         let active_dense = sparse.to_dense();
@@ -359,36 +338,6 @@ impl<B: Backend> SparseRAMWeight<B> {
                 Ok(active_dense)
             }
         }
-    }
-
-    /// Finalize for inference (irreversible)
-    ///
-    /// Transitions from Training → Inference mode:
-    /// - Deletes all pruned blocks
-    /// - Frees pruned storage
-    /// - Returns new weight in Inference mode
-    ///
-    /// # Errors
-    /// Returns error if already in Inference mode.
-    ///
-    /// # Warning
-    /// This operation is **irreversible**. After finalization:
-    /// - `.to_dense()` will panic
-    /// - Regrowth operations will fail
-    /// - RESU optimization not possible
-    pub fn finalize_inference(mut self) -> SparseRAMResult<Self> {
-        if self.mode == LifecycleMode::Inference {
-            return Err(SparseRAMError::LifecycleViolation {
-                operation: "finalize_inference".into(),
-                mode: "Inference (already finalized)".into(),
-            });
-        }
-
-        // Drop pruned blocks
-        self.pruned = PrunedStorage::None;
-        self.mode = LifecycleMode::Inference;
-
-        Ok(self)
     }
 
     /// Prefetch blocks (hint for Paged/Streaming engines)
@@ -563,7 +512,6 @@ mod tests {
         // Element sparsity should be 50% (4 zeros out of 8 elements)
         // But block sparsity may be 0 if all blocks contain at least one non-zero
         assert!(sparse_weight.sparsity() >= 0.0); // Just check it doesn't crash
-        assert_eq!(sparse_weight.mode(), LifecycleMode::Inference);
         assert_eq!(sparse_weight.policy_name(), "Eager");
     }
 
@@ -580,9 +528,6 @@ mod tests {
             .pruned_storage(PrunedStorageConfig::Ram)
             .apply(dense, mask)
             .unwrap();
-
-        // Should be in training mode
-        assert_eq!(sparse_weight.mode(), LifecycleMode::Training);
 
         // Phase B: to_dense() should fail if pruned values not loaded to GPU
         let result = sparse_weight.to_dense();
@@ -613,37 +558,9 @@ mod tests {
             .apply(dense, mask)
             .unwrap();
 
-        // Should be in inference mode
-        assert_eq!(sparse_weight.mode(), LifecycleMode::Inference);
-
         // to_dense() should fail
         let result = sparse_weight.to_dense();
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_finalize_inference() {
-        let device = Default::default();
-
-        let dense = Tensor::<TestBackend, 2>::from_data([[1.0, 0.0], [0.0, 2.0]], &device);
-
-        let mask_data = dense.clone().not_equal_elem(0.0);
-        let mask = SparseMask::from_tensor(mask_data);
-
-        let sparse_weight = SparseRAMBuilder::new()
-            .pruned_storage(PrunedStorageConfig::Ram) // Training mode
-            .apply(dense, mask)
-            .unwrap();
-
-        assert_eq!(sparse_weight.mode(), LifecycleMode::Training);
-
-        // Finalize
-        let mut finalized = sparse_weight.finalize_inference().unwrap();
-
-        assert_eq!(finalized.mode(), LifecycleMode::Inference);
-
-        // Now to_dense() should fail
-        assert!(finalized.to_dense().is_err());
     }
 
     #[test]
@@ -694,9 +611,6 @@ mod tests {
             PrunedLocation::Ram,
             "Initial location should be Ram"
         );
-
-        // Should be in training mode (has pruned storage)
-        assert_eq!(sparse_weight.mode(), LifecycleMode::Training);
 
         // RAM usage should be > 0 (storing pruned values)
         assert!(
@@ -855,9 +769,6 @@ mod tests {
             PrunedLocation::Disk,
             "Initial location should be Disk"
         );
-
-        // Should be in training mode
-        assert_eq!(sparse_weight.mode(), LifecycleMode::Training);
 
         // RAM usage should be minimal (just metadata, actual data on disk)
         let ram_bytes = sparse_weight.ram_bytes();

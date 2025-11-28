@@ -10,7 +10,7 @@
 /// - Backend-agnostic: works with any Burn backend
 
 use burn_core::module::Parameter;
-use burn_core::tensor::{backend::Backend, Bool, Int, Shape, Tensor, TensorData};
+use burn_core::tensor::{backend::Backend, Bool, Int, Tensor};
 
 use crate::core::{SparseError, SparseFormat, SparseResult};
 

@@ -213,6 +213,8 @@ impl DSnoT {
     /// Compute Δε-based grow and prune scores for all weights.
     ///
     /// Returns: (grow_scores [n_out, n_in], prune_scores [n_out, n_in])
+    ///
+    /// Fixed: Uses incremental accumulation instead of stacking to avoid 8 GB tensor allocation
     fn compute_delta_epsilon_scores<B: Backend>(
         &self,
         weights: &Tensor<B, 2>,
@@ -224,14 +226,14 @@ impl DSnoT {
         let n_samples = samples.len();
 
         let sparse_weights = mask.apply(weights);
+        let device = weights.device();
 
-        // Collect Δε across all samples for all weights
-        // grow_deltas: [n_samples, n_out, n_in]
-        // prune_deltas: [n_samples, n_out, n_in]
+        // Initialize accumulators (2D tensors only - no 3D stacking!)
+        let mut grow_sum = Tensor::<B, 2>::zeros([n_out, n_in], &device);
+        let mut grow_sum_sq = Tensor::<B, 2>::zeros([n_out, n_in], &device);
+        let mut prune_sum = Tensor::<B, 2>::zeros([n_out, n_in], &device);
 
-        let mut grow_deltas_all: Vec<Tensor<B, 2>> = Vec::with_capacity(n_samples);
-        let mut prune_deltas_all: Vec<Tensor<B, 2>> = Vec::with_capacity(n_samples);
-
+        // Accumulate incrementally across samples (avoids 8 GB allocation)
         for sample in samples {
             // Y_dense = W @ X  [n_out, batch=1]
             let y_dense = weights.clone().matmul(sample.clone().transpose());
@@ -242,15 +244,8 @@ impl DSnoT {
             // e = Y_dense - Y_sparse  [n_out, batch=1]
             let e = y_dense - y_sparse;
 
-            // For each weight (i, j):
-            // contribution = w_ij * x_j  [batch=1]
-            // Δε_grow = 2 * contribution * e_i - contribution²
-            // Δε_prune = 2 * contribution * e_i + contribution²
-
             // Broadcast computation:
-            // w * x gives [n_out, n_in] when properly broadcast
-            // We need: w[i,j] * x[j] for all (i,j)
-
+            // contribution[i,j] = w[i,j] * x[j]
             let x_t = sample.clone(); // [batch=1, n_in]
             let contribution = weights.clone() * x_t; // Broadcasting: [n_out, n_in] * [1, n_in]
 
@@ -263,29 +258,25 @@ impl DSnoT {
             // Δε_prune = 2·w·x·e + (w·x)²
             let delta_prune = contribution * e_expanded * 2.0 + contrib_sq;
 
-            grow_deltas_all.push(delta_grow);
-            prune_deltas_all.push(delta_prune);
+            // Accumulate sums for mean and variance computation
+            grow_sum = grow_sum + delta_grow.clone();
+            grow_sum_sq = grow_sum_sq + delta_grow.powf_scalar(2.0);
+            prune_sum = prune_sum + delta_prune;
         }
 
-        // Stack along sample dimension and compute statistics
-        let grow_stack = Tensor::stack::<3>(grow_deltas_all, 0); // [n_samples, n_out, n_in]
-        let prune_stack = Tensor::stack::<3>(prune_deltas_all, 0);
+        // Compute mean and variance from accumulated sums
+        // Mean: E[X] = sum(X) / n
+        let grow_mean = grow_sum.clone() / (n_samples as f32);
 
-        // Mean and variance across samples (dim 0)
-        let grow_mean = grow_stack.clone().mean_dim(0).squeeze::<2>(); // [n_out, n_in]
-        let grow_var = grow_stack
-            .clone()
-            .sub(grow_mean.clone().unsqueeze_dim(0))
-            .powf_scalar(2.0)
-            .mean_dim(0)
-            .squeeze::<2>(); // [n_out, n_in]
+        // Variance: Var[X] = E[X²] - (E[X])²
+        let grow_var = (grow_sum_sq / (n_samples as f32)) - grow_mean.clone().powf_scalar(2.0);
 
-        let prune_mean = prune_stack.mean_dim(0).squeeze::<2>(); // [n_out, n_in]
+        let prune_mean = prune_sum / (n_samples as f32);
 
-        // Grow score: μ / (σ² + λ)
+        // Grow score: μ / (σ² + λ) - variance penalty prevents unstable swaps
         let grow_scores = grow_mean.clone() / (grow_var + self.config.lambda);
 
-        // Prune score: μ
+        // Prune score: μ - no variance penalty (we want high error increase)
         let prune_scores = prune_mean;
 
         (grow_scores, prune_scores)
@@ -299,17 +290,6 @@ impl DSnoT {
         prune_scores: &Tensor<B, 2>,
         k: usize,
     ) -> (Vec<usize>, Vec<usize>) {
-        let shape = grow_scores.dims();
-        let total = shape[0] * shape[1];
-
-        // Get mask data
-        let mask_data: Vec<bool> = mask
-            .tensor()
-            .clone()
-            .into_data()
-            .to_vec()
-            .unwrap();
-
         // Get score data
         let grow_data: Vec<f32> = grow_scores
             .clone()
@@ -322,19 +302,23 @@ impl DSnoT {
             .to_vec()
             .unwrap();
 
+        // Use precomputed indices from SparseMask (avoids Bool→Vec conversion)
+        let pruned_indices = mask.pruned_indices();
+        let active_indices = mask.active_indices();
+
         // Find pruned positions with highest grow score
-        let mut pruned_candidates: Vec<(usize, f32)> = (0..total)
-            .filter(|&i| !mask_data[i]) // Only pruned
-            .map(|i| (i, grow_data[i]))
+        let mut pruned_candidates: Vec<(usize, f32)> = pruned_indices
+            .iter()
+            .map(|&i| (i, grow_data[i]))
             .collect();
 
         pruned_candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         let to_grow: Vec<usize> = pruned_candidates.iter().take(k).map(|(i, _)| *i).collect();
 
         // Find active positions with highest prune score (error increase)
-        let mut active_candidates: Vec<(usize, f32)> = (0..total)
-            .filter(|&i| mask_data[i]) // Only active
-            .map(|i| (i, prune_data[i]))
+        let mut active_candidates: Vec<(usize, f32)> = active_indices
+            .iter()
+            .map(|&i| (i, prune_data[i]))
             .collect();
 
         active_candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
@@ -351,14 +335,17 @@ impl DSnoT {
         to_prune: &[usize],
     ) -> SparseMask<B> {
         let shape = mask.shape();
-        let total = shape[0] * shape[1];
 
-        let mut mask_data: Vec<bool> = mask
+        // Convert Bool tensor → Int → Vec<i64> → Vec<bool> (proper conversion)
+        let mask_int_values: Vec<i64> = mask
             .tensor()
             .clone()
+            .int()
             .into_data()
+            .convert::<i64>()
             .to_vec()
             .unwrap();
+        let mut mask_data: Vec<bool> = mask_int_values.iter().map(|&x| x != 0).collect();
 
         // Grow: pruned → active
         for &idx in to_grow {

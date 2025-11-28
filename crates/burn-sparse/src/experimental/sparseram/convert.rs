@@ -7,7 +7,7 @@ use crate::experimental::sparseram::{
     storage::PrunedStorage,
 };
 use alloc::vec::Vec;
-use burn_core::tensor::{backend::Backend, ElementConversion, Tensor, TensorData};
+use burn_core::tensor::{backend::Backend, Tensor};
 
 /// Pipeline for converting dense tensors to SparseRAM format
 ///

@@ -1,7 +1,6 @@
 //! LRU cache implementation for block management
 
 use alloc::collections::BTreeMap;
-use core::hash::Hash;
 
 /// Least Recently Used (LRU) cache
 ///
