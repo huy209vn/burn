@@ -46,7 +46,7 @@ fn main() {
     // Configure MEST
     let mest_config = MestConfig {
         sparsity,
-        mutation_rate_init: 0.3,  // Start with 30% mutation
+        mutation_rate_init: 0.3,   // Start with 30% mutation
         mutation_rate_final: 0.05, // Decay to 5%
         lambda: 0.01,              // Gradient weight in salience
         update_frequency: 1,       // Update every step
@@ -55,9 +55,11 @@ fn main() {
     };
 
     println!("Configuration:");
-    println!("  Mutation rate: {:.0}% → {:.0}% (elastic decay)",
-             mest_config.mutation_rate_init * 100.0,
-             mest_config.mutation_rate_final * 100.0);
+    println!(
+        "  Mutation rate: {:.0}% → {:.0}% (elastic decay)",
+        mest_config.mutation_rate_init * 100.0,
+        mest_config.mutation_rate_final * 100.0
+    );
     println!("  Lambda: {}", mest_config.lambda);
     println!("  Gradient EMA: {}\n", mest_config.gradient_ema_beta);
 
@@ -98,6 +100,9 @@ fn main() {
 
     println!("\n=== Final Results ===");
     println!("Training steps: {}", n_steps);
-    println!("Final mutation rate: {:.1}%", mest.current_mutation_rate() * 100.0);
+    println!(
+        "Final mutation rate: {:.1}%",
+        mest.current_mutation_rate() * 100.0
+    );
     println!("\n✓ MEST training simulation complete!");
 }

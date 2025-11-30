@@ -29,9 +29,7 @@ use burn_sparse::{
 };
 
 #[cfg(feature = "experimental")]
-use burn_sparse::experimental::sparseram::{
-    PrunedStorageConfig, SparsePolicy, SparseRAM,
-};
+use burn_sparse::experimental::sparseram::{PrunedStorageConfig, SparsePolicy, SparseRAM};
 
 #[cfg(feature = "cuda")]
 use burn_cuda::{Cuda, CudaDevice};
@@ -102,14 +100,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Model configuration - 1B parameter model MLP layer
     // Based on typical 1B model architectures (e.g., GPT-2 1.5B, OPT-1.3B)
     // Standard ratio: intermediate_dim = 4 * hidden_dim
-    let hidden_dim = 2048;       // Output dimension (typical for 1B models)
+    let hidden_dim = 2048; // Output dimension (typical for 1B models)
     let intermediate_dim = 8192; // Input dimension (4x hidden_dim for MLP)
 
     println!("📐 Model Configuration:");
     println!("   Simulating: 1B parameter model MLP layer (down_proj)");
     println!("   Hidden dim: {}", hidden_dim);
     println!("   Intermediate dim: {}", intermediate_dim);
-    println!("   Total parameters: {} ({:.2} MB in fp32)\n",
+    println!(
+        "   Total parameters: {} ({:.2} MB in fp32)\n",
         hidden_dim * intermediate_dim,
         (hidden_dim * intermediate_dim * 4) as f32 / (1024.0 * 1024.0)
     );
@@ -140,22 +139,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sparsity_levels = vec![0.3, 0.5, 0.7, 0.9];
     let mut results = Vec::new();
 
-    println!("═══════════════════════════════════════════════════════════════════════════════════════════════════");
-    println!("║                            BENCHMARK RESULTS                                                    ║");
-    println!("═══════════════════════════════════════════════════════════════════════════════════════════════════");
-    println!("┌──────────────┬─────────┬─────────┬───────────┬──────────┬─────────────┬────────────────┐");
-    println!("│    Method    │ Target  │ Actual  │   VRAM    │   RAM    │  Inference  │   Throughput   │");
-    println!("│              │ Sparsity│ Sparsity│    (MB)   │   (MB)   │    (ms)     │  (tokens/sec)  │");
-    println!("├──────────────┼─────────┼─────────┼───────────┼──────────┼─────────────┼────────────────┤");
+    println!(
+        "═══════════════════════════════════════════════════════════════════════════════════════════════════"
+    );
+    println!(
+        "║                            BENCHMARK RESULTS                                                    ║"
+    );
+    println!(
+        "═══════════════════════════════════════════════════════════════════════════════════════════════════"
+    );
+    println!(
+        "┌──────────────┬─────────┬─────────┬───────────┬──────────┬─────────────┬────────────────┐"
+    );
+    println!(
+        "│    Method    │ Target  │ Actual  │   VRAM    │   RAM    │  Inference  │   Throughput   │"
+    );
+    println!(
+        "│              │ Sparsity│ Sparsity│    (MB)   │   (MB)   │    (ms)     │  (tokens/sec)  │"
+    );
+    println!(
+        "├──────────────┼─────────┼─────────┼───────────┼──────────┼─────────────┼────────────────┤"
+    );
 
     // Baseline: Dense model
-    let dense_result = benchmark_dense(
-        &weights,
-        &device,
-        batch_size,
-        seq_len,
-        n_inference_runs,
-    );
+    let dense_result = benchmark_dense(&weights, &device, batch_size, seq_len, n_inference_runs);
     dense_result.print_row();
     results.push(dense_result);
 
@@ -188,7 +195,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         results.push(dsnot_result);
     }
 
-    println!("└──────────────┴─────────┴─────────┴───────────┴──────────┴─────────────┴────────────────┘");
+    println!(
+        "└──────────────┴─────────┴─────────┴───────────┴──────────┴─────────────┴────────────────┘"
+    );
 
     // Summary statistics
     println!("\n╔═══════════════════════════════════════════════════════════════════════╗");
@@ -210,15 +219,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Compare Wanda vs DSnoT at each sparsity level
     println!("\n   Wanda vs DSnoT Comparison:");
     for &sparsity in &sparsity_levels {
-        let wanda = results.iter().find(|r| r.method == "Wanda" && r.sparsity_target == sparsity);
-        let dsnot = results.iter().find(|r| r.method == "DSnoT" && r.sparsity_target == sparsity);
+        let wanda = results
+            .iter()
+            .find(|r| r.method == "Wanda" && r.sparsity_target == sparsity);
+        let dsnot = results
+            .iter()
+            .find(|r| r.method == "DSnoT" && r.sparsity_target == sparsity);
 
         if let (Some(w), Some(d)) = (wanda, dsnot) {
             let vram_diff = ((d.vram_mb - w.vram_mb) / w.vram_mb) * 100.0;
-            let perf_diff = ((d.inference_time_ms - w.inference_time_ms) / w.inference_time_ms) * 100.0;
+            let perf_diff =
+                ((d.inference_time_ms - w.inference_time_ms) / w.inference_time_ms) * 100.0;
 
-            println!("   Sparsity {:.0}%: DSnoT VRAM {:+.1}%, Inference time {:+.1}%",
-                sparsity * 100.0, vram_diff, perf_diff);
+            println!(
+                "   Sparsity {:.0}%: DSnoT VRAM {:+.1}%, Inference time {:+.1}%",
+                sparsity * 100.0,
+                vram_diff,
+                perf_diff
+            );
         }
     }
 
@@ -227,12 +245,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   (Assuming 40 layers, typical architecture)");
     let layers = 40;
     for &sparsity in &sparsity_levels {
-        if let Some(r) = results.iter().find(|r| r.method == "DSnoT" && r.sparsity_target == sparsity) {
+        if let Some(r) = results
+            .iter()
+            .find(|r| r.method == "DSnoT" && r.sparsity_target == sparsity)
+        {
             let full_model_vram = r.vram_mb * layers as f32;
             let dense_full = dense_vram * layers as f32;
             let savings = (1.0 - full_model_vram / dense_full) * 100.0;
 
-            println!("   {:.0}% sparse: {:.2} GB VRAM ({:.1}% reduction)",
+            println!(
+                "   {:.0}% sparse: {:.2} GB VRAM ({:.1}% reduction)",
                 sparsity * 100.0,
                 full_model_vram / 1024.0,
                 savings
@@ -260,13 +282,7 @@ fn benchmark_dense(
     let vram = estimate_tensor_vram(weights);
 
     // Measure inference time
-    let inference_time = measure_inference_time(
-        weights,
-        device,
-        batch_size,
-        seq_len,
-        n_runs,
-    );
+    let inference_time = measure_inference_time(weights, device, batch_size, seq_len, n_runs);
 
     let throughput = (batch_size * seq_len) as f32 / (inference_time / 1000.0);
 
@@ -314,13 +330,8 @@ fn benchmark_wanda(
         let ram = sparse_weight.ram_mb();
 
         // Measure SPARSE inference time (using sparse matmul, not dense fallback)
-        let inference_time = measure_sparse_inference_time(
-            &mut sparse_weight,
-            device,
-            batch_size,
-            seq_len,
-            n_runs,
-        );
+        let inference_time =
+            measure_sparse_inference_time(&mut sparse_weight, device, batch_size, seq_len, n_runs);
 
         let throughput = (batch_size * seq_len) as f32 / (inference_time / 1000.0);
 
@@ -386,13 +397,8 @@ fn benchmark_dsnot(
         let ram = sparse_weight.ram_mb();
 
         // Measure SPARSE inference time (using sparse matmul, not dense fallback)
-        let inference_time = measure_sparse_inference_time(
-            &mut sparse_weight,
-            device,
-            batch_size,
-            seq_len,
-            n_runs,
-        );
+        let inference_time =
+            measure_sparse_inference_time(&mut sparse_weight, device, batch_size, seq_len, n_runs);
 
         let throughput = (batch_size * seq_len) as f32 / (inference_time / 1000.0);
 
@@ -429,9 +435,7 @@ fn create_calibration_data(
     device: &<MyBackend as Backend>::Device,
 ) -> CalibrationData<MyBackend> {
     let samples: Vec<Tensor<MyBackend, 2>> = (0..n_samples)
-        .map(|_| {
-            Tensor::random([1, n_features], Distribution::Normal(0.0, 1.0), device)
-        })
+        .map(|_| Tensor::random([1, n_features], Distribution::Normal(0.0, 1.0), device))
         .collect();
 
     CalibrationData::from_samples(samples)

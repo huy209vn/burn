@@ -10,12 +10,12 @@
 #![cfg(feature = "experimental")]
 
 mod tests {
+    use burn_core::tensor::Tensor;
     use burn_sparse::{
         core::CalibrationData,
         experimental::sparseram::{SparsePolicy, SparseRAM},
         methods::static_pruning::{Wanda, WandaConfig},
     };
-    use burn_core::tensor::Tensor;
 
     #[cfg(feature = "cuda")]
     use burn_cuda::{Cuda, CudaDevice};
@@ -74,7 +74,10 @@ mod tests {
         let mask = wanda.prune(&weights, &calibration_data);
 
         let actual_sparsity = mask.actual_sparsity();
-        println!("Element-level actual sparsity: {:.1}%", actual_sparsity * 100.0);
+        println!(
+            "Element-level actual sparsity: {:.1}%",
+            actual_sparsity * 100.0
+        );
 
         // Convert to SparseRAM with Eager + None
         // Format (CSR/COO/BlockCSR) chosen automatically by burn-sparse
@@ -88,7 +91,11 @@ mod tests {
         let vram_bytes = sparse_weight.vram_usage();
         let vram_mb = sparse_weight.vram_mb();
 
-        println!("Dense: {} bytes ({:.2} MB)", dense_bytes, dense_bytes as f32 / (1024.0 * 1024.0));
+        println!(
+            "Dense: {} bytes ({:.2} MB)",
+            dense_bytes,
+            dense_bytes as f32 / (1024.0 * 1024.0)
+        );
         println!("SparseRAM: {} bytes ({:.2} MB)", vram_bytes, vram_mb);
 
         // R4 Architecture: Element-level sparsity via CSR format
@@ -102,13 +109,20 @@ mod tests {
 
         // VRAM reduction should be proportional to sparsity
         let reduction_ratio = vram_bytes as f32 / dense_bytes as f32;
-        println!("VRAM reduction ratio: {:.2} (1.0 = no reduction)", reduction_ratio);
+        println!(
+            "VRAM reduction ratio: {:.2} (1.0 = no reduction)",
+            reduction_ratio
+        );
 
         let reduction_pct = (1.0 - reduction_ratio) * 100.0;
         println!("VRAM reduction: {:.1}%", reduction_pct);
 
         // RAM usage should be 0 (Eager + None)
-        assert_eq!(sparse_weight.ram_usage(), 0, "Eager + None should use 0 RAM");
+        assert_eq!(
+            sparse_weight.ram_usage(),
+            0,
+            "Eager + None should use 0 RAM"
+        );
 
         // Element sparsity should match Wanda target
         assert!((sparse_weight.sparsity() - actual_sparsity).abs() < 0.05);
@@ -172,7 +186,11 @@ mod tests {
 
         // RAM usage should be > 0 (storing pruned values)
         let ram_bytes = sparse_weight.ram_usage();
-        println!("RAM usage: {} bytes ({:.2} MB)", ram_bytes, ram_bytes as f32 / (1024.0 * 1024.0));
+        println!(
+            "RAM usage: {} bytes ({:.2} MB)",
+            ram_bytes,
+            ram_bytes as f32 / (1024.0 * 1024.0)
+        );
 
         // Should have storage available
         assert!(ram_bytes > 0, "PrunedStorage::Ram should use RAM");
@@ -222,15 +240,21 @@ mod tests {
         // Convert with PrunedStorage::Disk
         let sparse_weight = SparseRAM::enable()
             .policy(SparsePolicy::Eager)
-            .pruned_storage(burn_sparse::experimental::sparseram::config::PrunedStorageConfig::Disk {
-                path: disk_path.clone(),
-            })
+            .pruned_storage(
+                burn_sparse::experimental::sparseram::config::PrunedStorageConfig::Disk {
+                    path: disk_path.clone(),
+                },
+            )
             .apply(weights.clone(), mask.clone())
             .expect("Failed to convert to SparseRAM with Disk storage");
 
         // RAM usage should be minimal (just metadata)
         let ram_bytes = sparse_weight.ram_usage();
-        println!("RAM usage: {} bytes ({:.2} MB)", ram_bytes, ram_bytes as f32 / (1024.0 * 1024.0));
+        println!(
+            "RAM usage: {} bytes ({:.2} MB)",
+            ram_bytes,
+            ram_bytes as f32 / (1024.0 * 1024.0)
+        );
 
         // Should have minimal RAM usage (disk-backed)
         assert!(

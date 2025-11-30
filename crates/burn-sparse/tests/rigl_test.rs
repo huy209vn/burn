@@ -1,6 +1,6 @@
 //! Tests for RigL dynamic sparse training
-use burn_core as burn;
 use burn::tensor::Tensor;
+use burn_core as burn;
 use burn_ndarray::NdArray;
 use burn_sparse::prelude::*;
 
@@ -99,7 +99,8 @@ fn test_rigl_mask_update_maintains_sparsity() {
 fn test_rigl_update_frequency() {
     let device = Default::default();
 
-    let mask_tensor = Tensor::<TestBackend, 2, _>::from_data([[true, false], [false, true]], &device);
+    let mask_tensor =
+        Tensor::<TestBackend, 2, _>::from_data([[true, false], [false, true]], &device);
     let initial_mask = SparseMask::from_tensor(mask_tensor);
 
     let config = RigLConfig {
@@ -116,7 +117,12 @@ fn test_rigl_update_frequency() {
     // First 99 calls should not update
     for i in 1..100 {
         let mask = rigl.update_mask(&weights, &gradients);
-        assert_eq!(mask.n_active(), initial_mask.n_active(), "Step {} should not update", i);
+        assert_eq!(
+            mask.n_active(),
+            initial_mask.n_active(),
+            "Step {} should not update",
+            i
+        );
     }
 
     // 100th call should update

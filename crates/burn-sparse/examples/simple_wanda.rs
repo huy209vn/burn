@@ -38,11 +38,8 @@ fn main() {
 
     println!("Collecting {} calibration samples...", n_calibration);
     for _ in 0..n_calibration {
-        let sample: Tensor<Backend, 1> = Tensor::random(
-            [input_dim],
-            Distribution::Normal(0.0, 1.0),
-            &device,
-        );
+        let sample: Tensor<Backend, 1> =
+            Tensor::random([input_dim], Distribution::Normal(0.0, 1.0), &device);
         calibration_samples.push(sample.unsqueeze_dim(0));
     }
 

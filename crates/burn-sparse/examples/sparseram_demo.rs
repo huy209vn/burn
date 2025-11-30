@@ -13,7 +13,7 @@ use burn_sparse::{
 };
 
 #[cfg(feature = "experimental")]
-use burn_sparse::experimental::sparseram::{SparseRAM, SparsePolicy};
+use burn_sparse::experimental::sparseram::{SparsePolicy, SparseRAM};
 
 use burn::tensor::{ElementConversion, Shape, Tensor, TensorData};
 
@@ -53,7 +53,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("📐 Layer dimensions:");
     println!("   Input: {}", intermediate_dim);
     println!("   Output: {}", hidden_dim);
-    println!("   Total parameters: {} ({:.2} MB in bf16)\n",
+    println!(
+        "   Total parameters: {} ({:.2} MB in bf16)\n",
         hidden_dim * intermediate_dim,
         (hidden_dim * intermediate_dim * 2) as f32 / 1_000_000.0
     );
@@ -150,7 +151,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let vram_reduction = (1.0 - (sparse_weight.vram_mb() / dense_size_mb)) * 100.0;
 
-        println!("   Sparsity {:.0}%: VRAM = {:.2} MB, Reduction = {:.1}%",
+        println!(
+            "   Sparsity {:.0}%: VRAM = {:.2} MB, Reduction = {:.1}%",
             target_sparsity * 100.0,
             sparse_weight.vram_mb(),
             vram_reduction
@@ -202,4 +204,3 @@ fn create_calibration_data(
 
     CalibrationData::from_samples(samples)
 }
-

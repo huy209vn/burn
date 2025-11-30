@@ -3,12 +3,12 @@
 #![cfg(feature = "experimental")]
 
 mod tests {
+    use burn_core::tensor::Tensor;
     use burn_sparse::{
         core::{CalibrationData, SparseFormat, SparseMask},
-        experimental::sparseram::{SparseRAM, SparsePolicy},
+        experimental::sparseram::{SparsePolicy, SparseRAM},
         methods::static_pruning::{Wanda, WandaConfig},
     };
-    use burn_core::tensor::Tensor;
 
     #[cfg(feature = "cuda")]
     use burn_cuda::{Cuda, CudaDevice};
@@ -39,11 +39,14 @@ mod tests {
             &device,
         );
 
-    let dense_elements = 100 * 100; // 10,000
-    let dense_vram_bytes = dense_elements * std::mem::size_of::<f32>(); // bytes for f32
-    let dense_vram_mb = dense_vram_bytes as f32 / 1024.0 / 1024.0;
+        let dense_elements = 100 * 100; // 10,000
+        let dense_vram_bytes = dense_elements * std::mem::size_of::<f32>(); // bytes for f32
+        let dense_vram_mb = dense_vram_bytes as f32 / 1024.0 / 1024.0;
 
-    println!("Dense: {} elements, {} bytes ({:.2} MB)", dense_elements, dense_vram_bytes, dense_vram_mb);
+        println!(
+            "Dense: {} elements, {} bytes ({:.2} MB)",
+            dense_elements, dense_vram_bytes, dense_vram_mb
+        );
 
         // Apply Wanda pruning (70% sparsity)
         let n_calibration = 32;
@@ -86,20 +89,39 @@ mod tests {
         println!("\nSparseRAM (CSR format):");
         println!("  Non-zeros: {} / {}", nnz, dense_elements);
         println!("  Sparsity: {:.1}%", sparsity * 100.0);
-        println!("  VRAM: {} bytes ({:.2} MB, {:.3} GB)", vram_bytes, sparse_weight.vram_mb(), sparse_weight.vram_gb());
+        println!(
+            "  VRAM: {} bytes ({:.2} MB, {:.3} GB)",
+            vram_bytes,
+            sparse_weight.vram_mb(),
+            sparse_weight.vram_gb()
+        );
 
         // Calculate reduction
         let reduction_ratio = vram_bytes as f32 / dense_vram_bytes as f32;
         let reduction_pct = (1.0 - reduction_ratio) * 100.0;
 
         println!("\nMemory reduction:");
-        println!("  Dense: {} bytes ({:.2} MB, {:.3} GB)", dense_vram_bytes, dense_vram_mb, dense_vram_mb / 1024.0);
-        println!("  Sparse (CSR): {} bytes ({:.2} MB, {:.3} GB)", vram_bytes, sparse_weight.vram_mb(), sparse_weight.vram_gb());
+        println!(
+            "  Dense: {} bytes ({:.2} MB, {:.3} GB)",
+            dense_vram_bytes,
+            dense_vram_mb,
+            dense_vram_mb / 1024.0
+        );
+        println!(
+            "  Sparse (CSR): {} bytes ({:.2} MB, {:.3} GB)",
+            vram_bytes,
+            sparse_weight.vram_mb(),
+            sparse_weight.vram_gb()
+        );
         println!("  Reduction: {:.1}%", reduction_pct);
         println!("  Ratio: {:.2}x smaller", 1.0 / reduction_ratio);
 
         // RAM usage should be 0 (Eager + None)
-        assert_eq!(sparse_weight.ram_usage(), 0, "Eager + None should use 0 RAM");
+        assert_eq!(
+            sparse_weight.ram_usage(),
+            0,
+            "Eager + None should use 0 RAM"
+        );
 
         // Sparsity should match Wanda target (within 5%)
         assert!((sparsity - actual_sparsity).abs() < 0.05);
@@ -109,7 +131,11 @@ mod tests {
         // At 70% sparsity: 3000 non-zeros × 12 = 36,000 bytes (90% of dense)
         // CSR has overhead at low sparsity, but at 70%+ we should see some reduction
         println!("\nNote: At 70% sparsity, CSR stores only non-zeros + indices");
-        println!("Expected VRAM ≈ nnz × 12 bytes = {} × 12 = {} bytes", nnz, nnz * 12);
+        println!(
+            "Expected VRAM ≈ nnz × 12 bytes = {} × 12 = {} bytes",
+            nnz,
+            nnz * 12
+        );
 
         // At 70% sparsity, we expect VRAM to be roughly proportional
         // (CSR overhead means it won't be exactly 30% of dense)
@@ -128,11 +154,14 @@ mod tests {
             &device,
         );
 
-    let dense_elements = 128 * 128; // 16,384
-    let dense_vram_bytes = dense_elements * std::mem::size_of::<f32>(); // bytes for f32
-    let dense_vram_mb = dense_vram_bytes as f32 / 1024.0 / 1024.0;
+        let dense_elements = 128 * 128; // 16,384
+        let dense_vram_bytes = dense_elements * std::mem::size_of::<f32>(); // bytes for f32
+        let dense_vram_mb = dense_vram_bytes as f32 / 1024.0 / 1024.0;
 
-    println!("Dense: {} elements, {} bytes ({:.2} MB)", dense_elements, dense_vram_bytes, dense_vram_mb);
+        println!(
+            "Dense: {} elements, {} bytes ({:.2} MB)",
+            dense_elements, dense_vram_bytes, dense_vram_mb
+        );
 
         // Apply Wanda pruning (90% sparsity - VERY sparse)
         let n_calibration = 32;
@@ -174,8 +203,18 @@ mod tests {
         println!("\nSparseRAM (format chosen automatically):");
         println!("  Non-zeros: {} / {}", nnz, dense_elements);
         println!("  Sparsity: {:.1}%", sparsity * 100.0);
-        println!("  Dense: {} bytes ({:.2} MB, {:.3} GB)", dense_vram_bytes, dense_vram_mb, dense_vram_mb / 1024.0);
-        println!("  Sparse: {} bytes ({:.2} MB, {:.3} GB)", vram_bytes, sparse_weight.vram_mb(), sparse_weight.vram_gb());
+        println!(
+            "  Dense: {} bytes ({:.2} MB, {:.3} GB)",
+            dense_vram_bytes,
+            dense_vram_mb,
+            dense_vram_mb / 1024.0
+        );
+        println!(
+            "  Sparse: {} bytes ({:.2} MB, {:.3} GB)",
+            vram_bytes,
+            sparse_weight.vram_mb(),
+            sparse_weight.vram_gb()
+        );
 
         let reduction_pct = (1.0 - (vram_bytes as f32 / dense_vram_bytes as f32)) * 100.0;
         println!("  VRAM reduction: {:.1}%", reduction_pct);
@@ -187,7 +226,10 @@ mod tests {
         println!("Actual reduction: {:.1}%", reduction_pct);
 
         // At 90% sparsity, should see real VRAM reduction
-        assert!(vram_bytes < dense_vram_bytes / 2, "At 90% sparsity, VRAM should be < 50% of dense");
+        assert!(
+            vram_bytes < dense_vram_bytes / 2,
+            "At 90% sparsity, VRAM should be < 50% of dense"
+        );
     }
 
     #[test]
@@ -221,8 +263,16 @@ mod tests {
         println!("Shape: {:?}", sparse_weight.shape());
         println!("Non-zeros: {}", sparse_weight.nnz());
         println!("Sparsity: {:.1}%", sparse_weight.sparsity() * 100.0);
-        println!("VRAM: {} bytes ({:.2} MB, {:.3} GB)", sparse_weight.vram_usage(), sparse_weight.vram_mb(), sparse_weight.vram_gb());
-        println!("RAM: {} bytes (should be 0 for Eager+None)", sparse_weight.ram_usage());
+        println!(
+            "VRAM: {} bytes ({:.2} MB, {:.3} GB)",
+            sparse_weight.vram_usage(),
+            sparse_weight.vram_mb(),
+            sparse_weight.vram_gb()
+        );
+        println!(
+            "RAM: {} bytes (should be 0 for Eager+None)",
+            sparse_weight.ram_usage()
+        );
         println!("\nR4 implementation working! SparseTensor stored, blocks removed.");
     }
 }

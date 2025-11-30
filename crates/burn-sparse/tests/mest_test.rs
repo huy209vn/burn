@@ -1,6 +1,6 @@
 //! Tests for MEST dynamic sparse training
-use burn_core as burn;
 use burn::tensor::Tensor;
+use burn_core as burn;
 use burn_ndarray::NdArray;
 use burn_sparse::prelude::*;
 
@@ -36,7 +36,7 @@ fn test_mest_uses_salience_for_both_prune_and_grow() {
     // Zero grads: 10.0 at (0,1), 20.0 at (1,0), 5.0 at (1,2)
 
     let config = MestConfig {
-        lambda: 1.0, // Equal weight for magnitude and gradient
+        lambda: 1.0,              // Equal weight for magnitude and gradient
         mutation_rate_init: 0.34, // Drop 1 out of 3 (0.34 * 3 = 1.02 -> floors to 1)
         mutation_rate_final: 0.34,
         update_frequency: 1,
@@ -69,22 +69,25 @@ fn test_mest_uses_salience_for_both_prune_and_grow() {
     println!("New mask:      {:?}", mask_vec);
 
     // Expected: [F, F, T, T, T, F] (pruned (0,0), grew (1,0))
-    assert_eq!(mask_vec[0], false, "(0,0) should be pruned (lowest salience)");
-    assert_eq!(mask_vec[3], true, "(1,0) should be grown (highest salience)");
+    assert_eq!(
+        mask_vec[0], false,
+        "(0,0) should be pruned (lowest salience)"
+    );
+    assert_eq!(
+        mask_vec[3], true,
+        "(1,0) should be grown (highest salience)"
+    );
 }
 
 #[test]
 fn test_mest_elastic_mutation_schedule() {
     let device = Default::default();
 
-    let mask_tensor = Tensor::<TestBackend, 2, _>::from_data(
-        [[true, true, true, true]],
-        &device,
-    );
+    let mask_tensor = Tensor::<TestBackend, 2, _>::from_data([[true, true, true, true]], &device);
     let initial_mask = SparseMask::from_tensor(mask_tensor);
 
     let config = MestConfig {
-        mutation_rate_init: 0.5, // Start at 50%
+        mutation_rate_init: 0.5,  // Start at 50%
         mutation_rate_final: 0.1, // End at 10%
         update_frequency: 1,
         ..Default::default()
@@ -106,8 +109,12 @@ fn test_mest_elastic_mutation_schedule() {
 
     // At halfway point, should be midpoint: 0.5 + (0.1 - 0.5) * 0.5 = 0.3
     let expected_mid = 0.5 + (0.1 - 0.5) * 0.5;
-    assert!((mest.current_mutation_rate() - expected_mid).abs() < 1e-5,
-        "Expected {}, got {}", expected_mid, mest.current_mutation_rate());
+    assert!(
+        (mest.current_mutation_rate() - expected_mid).abs() < 1e-5,
+        "Expected {}, got {}",
+        expected_mid,
+        mest.current_mutation_rate()
+    );
 
     // Advance to step 100 (end)
     for _ in 50..100 {
@@ -156,10 +163,7 @@ fn test_mest_gradient_ema() {
 fn test_mest_lambda_weight() {
     let device = Default::default();
 
-    let mask_tensor = Tensor::<TestBackend, 2, _>::from_data(
-        [[true, false, true]],
-        &device,
-    );
+    let mask_tensor = Tensor::<TestBackend, 2, _>::from_data([[true, false, true]], &device);
     let initial_mask = SparseMask::from_tensor(mask_tensor);
 
     // Test with lambda=0 (pure magnitude, like magnitude pruning)
@@ -239,7 +243,10 @@ fn test_mest_maintains_sparsity() {
     // Run multiple updates
     for _ in 0..10 {
         let new_mask = mest.update_mask(&weights, &gradients);
-        assert_eq!(new_mask.n_active(), initial_count,
-            "Sparsity should be maintained across updates");
+        assert_eq!(
+            new_mask.n_active(),
+            initial_count,
+            "Sparsity should be maintained across updates"
+        );
     }
 }
