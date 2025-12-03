@@ -939,6 +939,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "burn-jepa"
+version = "0.20.0-pre.3"
+dependencies = [
+ "burn",
+ "burn-autodiff",
+ "burn-core",
+ "burn-derive",
+ "burn-ndarray",
+ "burn-nn",
+ "burn-train",
+ "rand 0.8.5",
+]
+
+[[package]]
 name = "burn-ndarray"
 version = "0.20.0-pre.3"
 dependencies = [
