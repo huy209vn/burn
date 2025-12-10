@@ -16,7 +16,7 @@ members = [
 
 exclude = [
     "examples/notebook",
-    "examples/raspberry-pi-pico",        # will cause xtask issues otherwise
+    "examples/raspberry-pi-pico",
     "crates/burn-import/model-checks/*", # exclude model checking crates from workspace
 ]
 
@@ -24,7 +24,7 @@ exclude = [
 edition = "2024"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-version = "0.20.0-pre.3"
+version = "0.20.0-pre.5"
 
 [workspace.lints.clippy]
 
@@ -50,7 +50,6 @@ data-encoding = { version = "2.9.0", default-features = false, features = [
 ] }
 dirs = "6.0.0"
 encoding_rs = "0.8.33"
-textdistance = { version = "1.1.1", default-features = false }
 fake = "4.4.0"
 flate2 = "1.1.4"
 float-cmp = "0.10.0"
@@ -65,7 +64,7 @@ indicatif = "0.18.0"
 insta = "1.43.2"
 js-sys = "0.3.77"
 libm = "0.2.15"
-log = { default-features = false, version = "0.4.28" }
+log = { default-features = false, version = "0.4.29" }
 parking_lot = { version = "0.12.5", default-features = false }
 paste = "1"
 planus = { version = "=1.1" }
@@ -104,7 +103,8 @@ strum = { version = "0.27.2", features = ["derive"] }
 syn = { version = "2.0.111", features = ["full", "extra-traits"] }
 tar = "0.4.44"
 tempfile = "3.20.0"
-thiserror = "2.0.17"
+textdistance = { version = "1.1.1", default-features = false }
+thiserror = { version = "2", default-features = false }
 tokio = { version = "1.47.1", features = ["rt", "macros"] }
 tokio-tungstenite = "0.28"
 tokio-util = "0.7"
@@ -159,10 +159,10 @@ serde = { version = "1.0.228", default-features = false, features = [
     "alloc",
 ] } # alloc is for no_std, derive is needed
 serde_json = { version = "1.0.145", default-features = false }
-uuid = { version = "1.18.0", default-features = false }
+uuid = { version = "1.19.0", default-features = false }
 
 byteorder = { version = "1.5.0", default-features = false }
-libc = "0.2.177"
+libc = "0.2.178"
 nvml-wrapper = "0.11.0"
 sysinfo = "0.37.2"
 systemstat = "0.2.5"
@@ -174,17 +174,17 @@ portable-atomic = { version = "1.11.1" }
 portable-atomic-util = { version = "0.2.4", features = ["alloc"] }
 
 ### For the main burn branch. ###
-cubecl = { git = "https://github.com/tracel-ai/cubecl", default-features = false, rev = "a15c1d2735490b65d26dc3374c9810d090d9c4de" }
-cubecl-common = { git = "https://github.com/tracel-ai/cubecl", default-features = false, rev = "a15c1d2735490b65d26dc3374c9810d090d9c4de" }
-cubecl-quant = { git = "https://github.com/tracel-ai/cubecl", default-features = false, rev = "a15c1d2735490b65d26dc3374c9810d090d9c4de" }
+cubecl = { git = "https://github.com/tracel-ai/cubecl", default-features = false, rev = "ae290d34ce50dca14fbc8461691f580d157fc124" }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", default-features = false, rev = "ae290d34ce50dca14fbc8461691f580d157fc124" }
+cubek = { git = "https://github.com/tracel-ai/cubek", default-features = false, rev = "6ca8999a576bbde387cb438515551f53f9599a54" }
 ### For local development. ###
 # cubecl = { path = "../cubecl/crates/cubecl", default-features = false }
 # cubecl-common = { path = "../cubecl/crates/cubecl-common", default-features = false }
-# cubecl-quant = { path = "../cubecl/crates/cubecl-quant", default-features = false }
+# cubek = { path = "../cubek/crates/cubek", default-features = false }
 ### For the release. ###
-# cubecl = { version = "=0.9.0-pre.3", default-features = false }
-# cubecl-common = { version = "=0.9.0-pre.3", default-features = false }
-# cubecl-quant = { version = "=0.9.0-pre.3", default-features = false }
+# cubecl = { version = "=0.9.0-pre.5", default-features = false }
+# cubecl-common = { version = "=0.9.0-pre.5", default-features = false }
+# cubek = { version = "=0.9.0-pre.5", default-features = false }
 
 ### For xtask crate ###
 tracel-xtask = { version = "=2.2.1" }

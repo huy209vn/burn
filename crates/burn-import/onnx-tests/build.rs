@@ -1,10 +1,11 @@
-use burn_import::onnx::{ModelGen, RecordType};
+use burn_import::onnx::ModelGen;
 
 fn main() {
     // Re-run this build script if the onnx-tests directory changes.
     println!("cargo:rerun-if-changed=tests");
 
     // Add onnx models.
+    // All models are now saved in burnpack format (.bpk files)
     ModelGen::new()
         .input("tests/abs/abs.onnx")
         .input("tests/add/add.onnx")
@@ -37,7 +38,9 @@ fn main() {
         .input("tests/attention/attention_qk_output_2.onnx")
         .input("tests/attention/attention_qk_output_3.onnx")
         .input("tests/avg_pool1d/avg_pool1d.onnx")
+        .input("tests/avg_pool1d_ceil_mode/avg_pool1d_ceil_mode.onnx")
         .input("tests/avg_pool2d/avg_pool2d.onnx")
+        .input("tests/avg_pool2d_ceil_mode/avg_pool2d_ceil_mode.onnx")
         .input("tests/batch_norm/batch_norm.onnx")
         .input("tests/bitshift/bitshift_left.onnx")
         .input("tests/bitshift/bitshift_left_scalar.onnx")
@@ -200,6 +203,10 @@ fn main() {
         .input("tests/less_or_equal/less_or_equal_broadcast.onnx")
         .input("tests/linear/linear.onnx")
         .input("tests/log/log.onnx")
+        .input("tests/lstm/lstm.onnx")
+        .input("tests/lstm/lstm_bidirectional.onnx")
+        .input("tests/lstm/lstm_reverse.onnx")
+        .input("tests/lstm/lstm_with_initial_state.onnx")
         .input("tests/log_softmax/log_softmax.onnx")
         .input("tests/where_op/where_op.onnx")
         .input("tests/where_op/where_op_broadcast.onnx")
@@ -216,7 +223,9 @@ fn main() {
         .input("tests/matmul/matmul_ranks.onnx")
         .input("tests/max/max.onnx")
         .input("tests/maxpool1d/maxpool1d.onnx")
+        .input("tests/maxpool1d_ceil_mode/maxpool1d_ceil_mode.onnx")
         .input("tests/maxpool2d/maxpool2d.onnx")
+        .input("tests/maxpool2d_ceil_mode/maxpool2d_ceil_mode.onnx")
         .input("tests/min/min.onnx")
         .input("tests/mean/mean.onnx")
         .input("tests/mul/mul.onnx")
@@ -230,6 +239,8 @@ fn main() {
         .input("tests/or/or_scalar.onnx")
         .input("tests/or/or_broadcast.onnx")
         .input("tests/pad/pad.onnx")
+        .input("tests/pad/pad_reflect.onnx")
+        .input("tests/pad/pad_edge.onnx")
         .input("tests/pow/pow.onnx")
         .input("tests/pow/pow_int.onnx")
         .input("tests/prelu/prelu.onnx")
@@ -347,82 +358,17 @@ fn main() {
         .input("tests/scan/scan_reverse.onnx")
         .input("tests/scan/scan_multi_state.onnx")
         .input("tests/scan/scan_axis1.onnx")
-        // Deeply nested subgraph tests (If -> Loop -> If -> Scan)
+        // Subgraph tests: nested control flow and outer-scope references
         .input("tests/subgraph/nested_if_loop_if.onnx")
         .input("tests/subgraph/nested_if_loop_if_scan.onnx")
+        .input("tests/subgraph/outer_scope_ref.onnx")
+        .input("tests/subgraph/outer_scope_multi_var.onnx")
+        .input("tests/subgraph/outer_scope_loop.onnx")
+        .input("tests/subgraph/outer_scope_scan.onnx")
+        .input("tests/subgraph/outer_scope_constant.onnx")
         .out_dir("model/")
         .run_from_script();
 
-    // The following tests are used to generate the model with different record types.
-    // (e.g. bincode, pretty_json, etc.) Do not need to add new tests here, just use the default
-    // record type to the ModelGen::new() call above.
-
-    ModelGen::new()
-        .input("tests/conv1d/conv1d.onnx")
-        .out_dir("model/named_mpk/")
-        .record_type(RecordType::NamedMpk)
-        .run_from_script();
-
-    ModelGen::new()
-        .input("tests/conv1d/conv1d.onnx")
-        .out_dir("model/named_mpk_half/")
-        .record_type(RecordType::NamedMpk)
-        .half_precision(true)
-        .run_from_script();
-
-    ModelGen::new()
-        .input("tests/conv1d/conv1d.onnx")
-        .out_dir("model/pretty_json/")
-        .record_type(RecordType::PrettyJson)
-        .run_from_script();
-
-    ModelGen::new()
-        .input("tests/conv1d/conv1d.onnx")
-        .out_dir("model/pretty_json_half/")
-        .record_type(RecordType::PrettyJson)
-        .half_precision(true)
-        .run_from_script();
-
-    ModelGen::new()
-        .input("tests/conv1d/conv1d.onnx")
-        .out_dir("model/named_mpk_gz/")
-        .record_type(RecordType::NamedMpkGz)
-        .run_from_script();
-
-    ModelGen::new()
-        .input("tests/conv1d/conv1d.onnx")
-        .out_dir("model/named_mpk_gz_half/")
-        .record_type(RecordType::NamedMpkGz)
-        .half_precision(true)
-        .run_from_script();
-
-    ModelGen::new()
-        .input("tests/conv1d/conv1d.onnx")
-        .out_dir("model/bincode/")
-        .record_type(RecordType::Bincode)
-        .run_from_script();
-
-    ModelGen::new()
-        .input("tests/conv1d/conv1d.onnx")
-        .out_dir("model/bincode_half/")
-        .record_type(RecordType::Bincode)
-        .half_precision(true)
-        .run_from_script();
-
-    ModelGen::new()
-        .input("tests/conv1d/conv1d.onnx")
-        .out_dir("model/bincode_embedded/")
-        .embed_states(true)
-        .record_type(RecordType::Bincode)
-        .run_from_script();
-
-    ModelGen::new()
-        .input("tests/conv1d/conv1d.onnx")
-        .out_dir("model/bincode_embedded_half/")
-        .embed_states(true)
-        .half_precision(true)
-        .record_type(RecordType::Bincode)
-        .run_from_script();
-
-    // panic!("Purposefully failing build to output logs.");
+    // Note: Previous record type variants (NamedMpk, PrettyJson, Bincode, etc.)
+    // have been removed. All models now use burnpack format exclusively.
 }

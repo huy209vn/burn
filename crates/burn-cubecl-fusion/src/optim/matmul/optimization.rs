@@ -17,14 +17,19 @@ use crate::{
 };
 use burn_fusion::stream::Context;
 use burn_ir::BinaryOpIr;
-use cubecl::matmul::{
+use cubecl::{
+    client::ComputeClient,
+    prelude::*,
+    std::tensor::{MatrixBatchLayout, matrix_batch_layout},
+};
+use cubek::matmul::{
     AcceleratedTileKind,
     components::{
-        self, MatmulElems, MatmulProblem, MatmulSetupError,
+        self, MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError,
         tile::{cmma::CmmaMatmul, io::Filled, mma::MmaMatmul},
     },
     kernels::layered::{
-        Selection,
+        Algorithm, Selection,
         double_buffering::{CyclicDoubleBufferingAlgorithm, DoubleBufferingArgs},
         double_unit::DoubleUnitAlgorithm,
         launch_kernel_virtual,
@@ -33,12 +38,7 @@ use cubecl::matmul::{
         simple_unit::SimpleUnitAlgorithm,
         vecmat::{DoubleVecMatAlgorithm, SimpleVecMatAlgorithm},
     },
-};
-use cubecl::{
-    client::ComputeClient,
-    matmul::{components::MatmulLineSizes, kernels::layered::Algorithm},
-    prelude::*,
-    std::tensor::{MatrixBatchLayout, matrix_batch_layout},
+    tune_key::MatmulElemType,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -110,16 +110,13 @@ impl<R: Runtime> MatmulOptimizationTuneArg<R> {
 
         #[cfg(feature = "autotune-checks")]
         if let TuneOutput::Checked { handles } = &mut output {
-            let out_desc = context
-                .tensors
-                .get(&self.info.variants.simple.op.out.id)
-                .unwrap();
+            let out_desc = context.tensors.get(&self.info.matmul.op.out.id).unwrap();
             let handle_out = context
                 .handles
                 .get_handle(&out_desc.id, &burn_ir::TensorStatus::ReadOnly);
 
             handles.insert(
-                self.info.variants.simple.op.out.id,
+                self.info.matmul.op.out.id,
                 (out_desc.shape.dims.clone(), handle_out.clone()),
             );
         }
@@ -359,9 +356,18 @@ impl<R: Runtime> TraceRunner<R> for FusedMatmulLaunch<'_> {
         configs: &'a [FuseBlockConfig],
     ) -> Result<(), FusedMatmulError> {
         let (lhs, rhs, out) = (
-            self.matmul.lhs.precision().into_type(),
-            self.matmul.rhs.precision().into_type(),
-            self.matmul.out.precision().into_type(),
+            MatmulElemType {
+                dtype: self.matmul.lhs.precision().into_type(),
+                quantized: false,
+            },
+            MatmulElemType {
+                dtype: self.matmul.rhs.precision().into_type(),
+                quantized: false,
+            },
+            MatmulElemType {
+                dtype: self.matmul.out.precision().into_type(),
+                quantized: false,
+            },
         );
         let dtypes = MatmulElems::from_globals(lhs, rhs, out);
         self.matmul_fused(client, inputs, outputs, &configs[0], dtypes)
@@ -469,6 +475,8 @@ impl FusedMatmulLaunch<'_> {
                 true => components::MatrixLayout::ColMajor,
                 false => components::MatrixLayout::RowMajor,
             },
+            lhs_strides,
+            rhs_strides,
         };
 
         match self.selector {

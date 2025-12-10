@@ -13,8 +13,9 @@ use std::{
 };
 
 use crate::ir::{ArgType, Argument, DataId, NodeType, RawNode, TensorData};
-use crate::proto_conversion::argument_from_initializer;
+use crate::proto_conversion::{argument_from_initializer, argument_from_initializer_lazy};
 use crate::protos::{TensorProto, ValueInfoProto};
+use crate::tensor_store::TensorDataRef;
 
 use super::tensor_store::TensorStore;
 
@@ -74,7 +75,7 @@ impl NameRegistry {
 
 /// Mutable state container for ONNX graph conversion
 #[derive(Debug)]
-pub struct GraphState {
+pub(crate) struct GraphState {
     /// The nodes that have been processed, used to copy the outputs to a child node
     pub(super) processed_nodes: Vec<RawNode>,
     /// The inputs of the graph
@@ -85,12 +86,19 @@ pub struct GraphState {
     graph_input_map: HashMap<String, usize>,
     /// Maps ONNX names to node outputs (node_index, output_index)
     node_output_map: HashMap<String, (usize, usize)>,
-    /// Central tensor data store
-    pub(super) tensor_store: TensorStore,
+    /// Central tensor data store (shared via Rc for Arguments to reference)
+    pub(super) tensor_store: Rc<TensorStore>,
+    /// Maps constant output names to their data IDs (shared via Rc)
+    /// Updated whenever a Constant node is created
+    constant_map: Rc<HashMap<String, DataId>>,
     /// Maps ONNX value names to their type info (from value_info)
     value_info_map: HashMap<String, ArgType>,
     /// Optional shared name registry for ensuring unique names across subgraphs
     name_registry: Option<NameRegistry>,
+    /// Arguments for outer-scope references (from parent graph)
+    /// Used for subgraphs in If/Loop/Scan nodes.
+    /// Stores full Argument to preserve constant values for LSTM weights etc.
+    outer_scope_types: HashMap<String, Argument>,
 }
 
 impl GraphState {
@@ -113,18 +121,52 @@ impl GraphState {
         value_infos: &[ValueInfoProto],
         name_registry: Option<NameRegistry>,
     ) -> Self {
+        Self::new_with_registry_and_outer_scope(
+            inputs,
+            outputs,
+            initializers,
+            value_infos,
+            name_registry,
+            HashMap::new(),
+        )
+    }
+
+    /// Create new GraphState with optional shared name registry and outer scope types
+    ///
+    /// The `outer_scope_types` map provides full Arguments for values that the graph
+    /// references from parent graphs (for subgraphs in If/Loop/Scan nodes).
+    /// Full Arguments are needed to preserve constant values for LSTM weights etc.
+    pub(crate) fn new_with_registry_and_outer_scope(
+        inputs: &[ValueInfoProto],
+        outputs: &[ValueInfoProto],
+        initializers: &[TensorProto],
+        value_infos: &[ValueInfoProto],
+        name_registry: Option<NameRegistry>,
+        outer_scope_types: HashMap<String, Argument>,
+    ) -> Self {
         let mut tensor_store = TensorStore::new();
+        let mut constant_map = HashMap::new();
         let mut graph_input_map = HashMap::new();
         let mut node_output_map = HashMap::new();
         let mut value_info_map = HashMap::new();
 
         // Convert all initializers to Constant nodes
-        let processed_nodes =
-            process_initializers(initializers, &mut tensor_store, name_registry.as_ref());
+        let processed_nodes = process_initializers(
+            initializers,
+            &mut tensor_store,
+            &mut constant_map,
+            name_registry.as_ref(),
+        );
 
         // Map initializer names to their constant node outputs
+        // Insert both original ONNX names and sanitized names for lookup flexibility
         for (i, initializer) in initializers.iter().enumerate() {
             node_output_map.insert(initializer.name.clone(), (i, 0));
+            // Also insert sanitized name for lookups using sanitized outer-scope references
+            let sanitized = crate::proto_conversion::sanitize_name(&initializer.name);
+            if sanitized != initializer.name {
+                node_output_map.insert(sanitized, (i, 0));
+            }
         }
 
         // Store value_info for intermediate values
@@ -136,7 +178,17 @@ impl GraphState {
 
         let outputs = outputs
             .iter()
-            .map(|x| Argument::try_from(x.clone()).unwrap())
+            .map(|x| {
+                Argument::try_from(x.clone()).unwrap_or_else(|_| {
+                    // Output may not have explicit type info (type will be inferred later)
+                    let sanitized = crate::proto_conversion::sanitize_name(&x.name);
+                    log::debug!(
+                        "Subgraph output '{}' has no type, will be inferred later",
+                        x.name
+                    );
+                    Argument::from_name(sanitized)
+                })
+            })
             .collect::<Vec<Argument>>();
 
         let inputs = inputs
@@ -151,7 +203,46 @@ impl GraphState {
                 // Preserve the original ONNX input name for better generated code usability
                 graph_input_map.insert(x.name.clone(), graph_input_map.len());
 
-                let arg = Argument::try_from(x.clone()).unwrap();
+                // Try to convert from proto, but if no type is available (common for subgraph
+                // inputs that reference outer scope), use the outer scope argument
+                let arg = match Argument::try_from(x.clone()) {
+                    Ok(arg) => arg,
+                    Err(_) => {
+                        // No type in proto - check outer scope
+                        let sanitized = crate::proto_conversion::sanitize_name(&x.name);
+                        if let Some(outer_arg) = outer_scope_types.get(&sanitized) {
+                            log::debug!(
+                                "Subgraph input '{}' has no type, using outer-scope arg: {:?}",
+                                x.name,
+                                outer_arg.ty
+                            );
+                            // Clone the full argument to preserve value_source and value_store
+                            let mut arg = outer_arg.clone();
+                            arg.name = sanitized;
+                            arg
+                        } else {
+                            // Also try with original name
+                            if let Some(outer_arg) = outer_scope_types.get(&x.name) {
+                                log::debug!(
+                                    "Subgraph input '{}' has no type, using outer-scope arg (original name): {:?}",
+                                    x.name,
+                                    outer_arg.ty
+                                );
+                                // Clone the full argument to preserve value_source and value_store
+                                let mut arg = outer_arg.clone();
+                                arg.name = sanitized;
+                                arg
+                            } else {
+                                // No type info available - create unknown type
+                                log::warn!(
+                                    "Subgraph input '{}' has no type and no outer-scope arg",
+                                    x.name
+                                );
+                                Argument::from_name(sanitized)
+                            }
+                        }
+                    }
+                };
                 // arg.name is already set from x.name via try_from
                 Some(arg)
             })
@@ -163,9 +254,11 @@ impl GraphState {
             processed_nodes,
             graph_input_map,
             node_output_map,
-            tensor_store,
+            tensor_store: Rc::new(tensor_store),
+            constant_map: Rc::new(constant_map),
             value_info_map,
             name_registry,
+            outer_scope_types,
         }
     }
 
@@ -185,6 +278,44 @@ impl GraphState {
         // Also check with original name for initializers (they use original names as keys)
         else if let Some(&(node_idx, output_idx)) = self.node_output_map.get(proto_str) {
             self.processed_nodes[node_idx].outputs[output_idx].clone()
+        }
+        // Check outer scope arguments (for subgraphs referencing parent graph values)
+        // Clone the full Argument to preserve value_source and value_store (for constants)
+        else if let Some(outer_arg) = self.outer_scope_types.get(&sanitized) {
+            log::debug!(
+                "Resolving outer-scope reference '{}' with type {:?}, value_source={:?}, has_store={}, original_name='{}'",
+                sanitized,
+                outer_arg.ty,
+                outer_arg.value_source,
+                outer_arg.value_store.is_some(),
+                outer_arg.name
+            );
+            let mut arg = outer_arg.clone();
+            if arg.is_constant() {
+                // Preserve original name for arguments with value_source == Constant.
+                // These reference a Constant node's output, and the name (e.g., "constant12_out1")
+                // is the key used to look up the constant data in the value store.
+            } else {
+                // For Dynamic arguments, use the sanitized ONNX name so code generation
+                // uses the correct variable name within the subgraph.
+                arg.name = sanitized;
+            }
+            arg
+        }
+        // Also check outer scope with original name (fallback for unsanitized lookups)
+        else if let Some(outer_arg) = self.outer_scope_types.get(proto_str) {
+            log::debug!(
+                "Resolving outer-scope reference '{}' (original name) with type {:?}",
+                proto_str,
+                outer_arg.ty
+            );
+            let mut arg = outer_arg.clone();
+            if arg.is_constant() {
+                // Preserve original name for Constant arguments (same logic as above)
+            } else {
+                arg.name = sanitized;
+            }
+            arg
         } else {
             log::warn!("Input {proto_str} not found, should only happen when peeking");
             Argument::from_name(sanitized)
@@ -192,13 +323,35 @@ impl GraphState {
     }
 
     /// Add a node (maps outputs, renames outputs)
+    ///
+    /// For Constant nodes, also registers the output name → data_id mapping
+    /// in constant_map for fast lookup during lift_constants.
     pub(super) fn add_node(&mut self, mut node: RawNode) {
         let node_idx = self.processed_nodes.len();
         let mut out_count = 1;
+
+        // Get data_id for Constant nodes (from their Static input)
+        let constant_data_id = if node.node_type == NodeType::Constant {
+            node.inputs
+                .first()
+                .and_then(|input| match input.value_source {
+                    crate::ir::ValueSource::Static(data_id) => Some(data_id),
+                    _ => None,
+                })
+        } else {
+            None
+        };
+
         for output in node.outputs.iter_mut() {
             self.node_output_map
                 .insert(output.name.clone(), (node_idx, out_count - 1));
             output.name = format!("{}_out{}", node.name, out_count);
+
+            // Register constant output name → data_id for fast lookup
+            if let Some(data_id) = constant_data_id {
+                Rc::make_mut(&mut self.constant_map).insert(output.name.clone(), data_id);
+            }
+
             out_count += 1;
         }
 
@@ -256,29 +409,32 @@ impl GraphState {
 
     /// Register a test constant in GraphState
     #[doc(hidden)]
-    pub fn register_test_constant(&mut self, name: String, tensor_data: TensorData) {
-        let (constant_node, _) = create_test_constant(name, tensor_data, &mut self.tensor_store);
+    #[allow(dead_code)] // Used by tests in node/ modules
+    pub(crate) fn register_test_constant(&mut self, name: String, tensor_data: TensorData) {
+        let (constant_node, data_id) = create_test_constant(
+            name.clone(),
+            tensor_data,
+            Rc::make_mut(&mut self.tensor_store),
+        );
+        // Register in constant_map (output name is the same as input name for test constants)
+        Rc::make_mut(&mut self.constant_map).insert(name, data_id);
         self.processed_nodes.push(constant_node);
     }
 
     /// Allocate a new tensor ID and store data in central store
     /// Returns the allocated ID
-    pub(crate) fn store_tensor_data(&mut self, data: TensorData) -> DataId {
-        self.tensor_store.store(data)
+    pub(crate) fn store_tensor_data(&mut self, data: TensorDataRef) -> DataId {
+        Rc::make_mut(&mut self.tensor_store).store(data)
     }
 
-    /// Get tensor data by ID from central store
-    pub(crate) fn get_tensor_data(&self, id: DataId) -> Option<&TensorData> {
-        self.tensor_store.get(id)
-    }
-
-    /// Get mutable tensor data by ID from central store
-    pub(crate) fn get_tensor_data_mut(&mut self, id: DataId) -> Option<&mut TensorData> {
-        self.tensor_store.get_mut(id)
-    }
-
-    /// Get data_id for a constant by output name
+    /// Get data_id for a constant by output name (O(1) lookup via constant_map)
     pub(crate) fn get_constant_data_id_by_output(&self, output_name: &str) -> Option<DataId> {
+        // First try the constant_map (O(1) lookup)
+        if let Some(&data_id) = self.constant_map.get(output_name) {
+            return Some(data_id);
+        }
+
+        // Fallback: scan processed_nodes (for backwards compatibility during transition)
         self.processed_nodes
             .iter()
             .find(|node| {
@@ -294,8 +450,33 @@ impl GraphState {
 
     /// Alias for get_constant_data_id_by_output (for test utilities)
     #[doc(hidden)]
+    #[allow(dead_code)] // Used by tests in node/ modules
     pub fn get_constant_data_id(&self, name: &str) -> Option<DataId> {
         self.get_constant_data_id_by_output(name)
+    }
+
+    /// Get Rc reference to the constant_map (for cheap preservation across state reset)
+    pub(crate) fn constant_map_rc(&self) -> Rc<HashMap<String, DataId>> {
+        self.constant_map.clone()
+    }
+
+    /// Restore tensor_store and constant_map from Rc references (no data copying)
+    /// Used in post-processing to preserve stores across GraphState reset
+    pub(crate) fn restore_stores(
+        &mut self,
+        tensor_store: Rc<TensorStore>,
+        constant_map: Rc<HashMap<String, DataId>>,
+    ) {
+        self.tensor_store = tensor_store;
+        self.constant_map = constant_map;
+    }
+
+    /// Build a ValueStore from the current state
+    /// Returns cloned Rc references to the tensor_store and constant_map
+    pub(crate) fn build_value_store(&self) -> crate::tensor_store::ValueStore {
+        use crate::tensor_store::ValueStore;
+
+        ValueStore::new(self.tensor_store.clone(), self.constant_map.clone())
     }
 }
 
@@ -326,19 +507,30 @@ fn create_constant_node(
 }
 
 /// Convert ONNX initializers to Constant nodes, store in tensor store
+///
+/// Uses the zero-copy lazy path when possible (raw_data available),
+/// falling back to the standard path for edge cases (scalars, empty tensors).
 fn process_initializers(
     initializers: &[TensorProto],
     tensor_store: &mut TensorStore,
+    constant_map: &mut HashMap<String, DataId>,
     name_registry: Option<&NameRegistry>,
 ) -> Vec<RawNode> {
     initializers
         .iter()
         .enumerate()
         .map(|(idx, initializer)| {
-            let (_arg, data) = argument_from_initializer(initializer);
+            // Try the zero-copy lazy path first (preserves mmap references)
+            let (arg, lazy_data) = match argument_from_initializer_lazy(initializer.clone()) {
+                Ok((arg, lazy_data)) => (arg, lazy_data),
+                Err(_) => {
+                    // Fallback to standard path for edge cases (scalars, empty tensors)
+                    let (arg, data) = argument_from_initializer(initializer);
+                    (arg, TensorDataRef::from(data))
+                }
+            };
 
-            // Allocate ID and store tensor data
-            let data_id = tensor_store.store(data);
+            let data_id = tensor_store.store(lazy_data);
 
             // Generate unique name using registry if available
             let const_name = if let Some(registry) = name_registry {
@@ -348,17 +540,22 @@ fn process_initializers(
             };
             let output_name = format!("{}_out1", const_name);
 
-            create_constant_node(const_name, output_name, _arg.ty.clone(), data_id)
+            // Register in constant_map for fast lookup
+            constant_map.insert(output_name.clone(), data_id);
+
+            create_constant_node(const_name, output_name, arg.ty.clone(), data_id)
         })
         .collect()
 }
 
 /// Create a test constant node with tensor data
+/// Returns (node, data_id) for registering in constant_map
+#[allow(dead_code)] // Used by register_test_constant
 fn create_test_constant(
     name: String,
     tensor_data: TensorData,
     tensor_store: &mut TensorStore,
-) -> (RawNode, usize) {
+) -> (RawNode, DataId) {
     use crate::ir::TensorDataExt;
     let elem_type = tensor_data.elem_type();
     let shape = tensor_data.shape.to_vec();
@@ -369,12 +566,14 @@ fn create_test_constant(
         static_shape: Some(shape.clone()),
     });
 
-    let data_id = tensor_store.store(tensor_data);
+    // Convert TensorData to TensorDataRef and store
+    let data_ref = TensorDataRef::from(tensor_data);
+    let data_id = tensor_store.store(data_ref);
 
     // Use name directly as output name for test lookups (no _const_out suffix)
     let const_node_name = format!("{}_const", name);
     let constant_node = create_constant_node(const_node_name, name, ty, data_id);
 
-    // Return node and a placeholder index (caller will assign proper index)
-    (constant_node, 0)
+    // Return node and data_id for registering in constant_map
+    (constant_node, data_id)
 }

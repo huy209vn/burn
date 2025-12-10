@@ -6,8 +6,8 @@ use burn_tensor::{
     quantization::{QTensorPrimitive, QuantLevel, params_shape},
 };
 use burn_tensor::{TensorMetadata, ops::unfold::calculate_unfold_shape};
+use cubecl::quant::scheme::BlockSize;
 use cubecl::{server::CopyDescriptor, tensor_vectorization_factor};
-use cubecl_quant::scheme::BlockSize;
 
 pub(crate) fn from_data<R: CubeRuntime>(data: TensorData, device: &R::Device) -> CubeTensor<R> {
     let shape: Shape = (&data.shape).into();
@@ -29,8 +29,8 @@ pub(crate) async fn into_data<R: CubeRuntime>(
         .client
         .read_one_tensor_async(binding)
         .await
-        .map_err(|err| ExecutionError::Generic {
-            context: format!("{err}"),
+        .map_err(|err| ExecutionError::WithContext {
+            reason: format!("{err}"),
         })?;
 
     Ok(TensorData::from_bytes(bytes, tensor.shape, tensor.dtype))

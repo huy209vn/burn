@@ -1,3 +1,4 @@
+use burn_tensor::IndexingUpdateOp;
 use core::hash::Hash;
 use serde::{Deserialize, Serialize};
 
@@ -369,8 +370,8 @@ pub enum NumericOperationIr {
     Gather(GatherOpIr),
     /// Operation corresponding to:
     ///
-    /// Float => [scatter](burn_tensor::ops::FloatTensorOps::float_scatter).
-    /// Int => [scatter](burn_tensor::ops::IntTensorOps::int_scatter).
+    /// Float => [scatter](burn_tensor::ops::FloatTensorOps::float_scatter_add).
+    /// Int => [scatter](burn_tensor::ops::IntTensorOps::int_scatter_add).
     Scatter(ScatterOpIr),
     /// Operation corresponding to:
     ///
@@ -379,8 +380,8 @@ pub enum NumericOperationIr {
     Select(SelectOpIr),
     /// Operation corresponding to:
     ///
-    /// Float => [select assign](burn_tensor::ops::FloatTensorOps::float_select_assign).
-    /// Int => [select assign](burn_tensor::ops::IntTensorOps::int_select_assign).
+    /// Float => [select assign](burn_tensor::ops::FloatTensorOps::float_select_add).
+    /// Int => [select assign](burn_tensor::ops::IntTensorOps::int_select_add).
     SelectAssign(SelectAssignOpIr),
     /// Operation corresponding to:
     ///
@@ -804,6 +805,7 @@ pub struct ScatterOpIr {
     pub dim: usize,
     pub indices: TensorIr,
     pub value: TensorIr,
+    pub update: IndexingUpdateOp,
     pub out: TensorIr,
 }
 
@@ -823,6 +825,7 @@ pub struct SelectAssignOpIr {
     pub dim: usize,
     pub indices: TensorIr,
     pub value: TensorIr,
+    pub update: IndexingUpdateOp,
     pub out: TensorIr,
 }
 
@@ -1262,6 +1265,7 @@ pub struct AvgPool1dOpIr {
     pub stride: usize,
     pub padding: usize,
     pub count_include_pad: bool,
+    pub ceil_mode: bool,
     pub out: TensorIr,
 }
 
@@ -1273,6 +1277,7 @@ pub struct AvgPool2dOpIr {
     pub stride: [usize; 2],
     pub padding: [usize; 2],
     pub count_include_pad: bool,
+    pub ceil_mode: bool,
     pub out: TensorIr,
 }
 
@@ -1285,6 +1290,7 @@ pub struct AvgPool1dBackwardOpIr {
     pub stride: usize,
     pub padding: usize,
     pub count_include_pad: bool,
+    pub ceil_mode: bool,
     pub out: TensorIr,
 }
 
@@ -1297,6 +1303,7 @@ pub struct AvgPool2dBackwardOpIr {
     pub stride: [usize; 2],
     pub padding: [usize; 2],
     pub count_include_pad: bool,
+    pub ceil_mode: bool,
     pub out: TensorIr,
 }
 
@@ -1340,6 +1347,7 @@ pub struct MaxPool1dOpIr {
     pub stride: usize,
     pub padding: usize,
     pub dilation: usize,
+    pub ceil_mode: bool,
     pub out: TensorIr,
 }
 
@@ -1351,6 +1359,7 @@ pub struct MaxPool1dWithIndicesOpIr {
     pub stride: usize,
     pub padding: usize,
     pub dilation: usize,
+    pub ceil_mode: bool,
     pub out: TensorIr,
     pub out_indices: TensorIr,
 }
@@ -1365,6 +1374,7 @@ pub struct MaxPool1dWithIndicesBackwardOpIr {
     pub stride: usize,
     pub padding: usize,
     pub dilation: usize,
+    pub ceil_mode: bool,
     pub out: TensorIr,
 }
 
@@ -1376,6 +1386,7 @@ pub struct MaxPool2dOpIr {
     pub stride: [usize; 2],
     pub padding: [usize; 2],
     pub dilation: [usize; 2],
+    pub ceil_mode: bool,
     pub out: TensorIr,
 }
 
@@ -1387,6 +1398,7 @@ pub struct MaxPool2dWithIndicesOpIr {
     pub stride: [usize; 2],
     pub padding: [usize; 2],
     pub dilation: [usize; 2],
+    pub ceil_mode: bool,
     pub out: TensorIr,
     pub out_indices: TensorIr,
 }
@@ -1401,6 +1413,7 @@ pub struct MaxPool2dWithIndicesBackwardOpIr {
     pub stride: [usize; 2],
     pub padding: [usize; 2],
     pub dilation: [usize; 2],
+    pub ceil_mode: bool,
     pub out: TensorIr,
 }
 

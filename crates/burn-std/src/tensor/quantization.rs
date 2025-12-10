@@ -1,15 +1,43 @@
 //! Quantization data representation.
 
 // Re-exported types
-pub use cubecl_quant::scheme::{
+pub use cubecl_common::quant::scheme::{
     BlockSize, QuantLevel, QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue,
 };
 
 use alloc::vec::Vec;
 use core::any::TypeId;
 use num_traits::PrimInt;
+use serde::{Deserialize, Serialize};
 
 use crate::bytes::Bytes;
+
+#[derive(
+    Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default,
+)]
+/// The precision of accumulating elements.
+pub enum QuantAcc {
+    /// Full precision.
+    #[default]
+    F32,
+    /// Half precision.
+    F16,
+    /// bfloat16 precision.
+    BF16,
+}
+
+/// Specify if the output of an operation is quantized using the scheme of the input
+/// or returned unquantized.
+#[derive(
+    Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default,
+)]
+pub enum QuantPropagation {
+    /// The output is quantized using the scheme of the input.
+    Propagate,
+    /// The output is not quantized.
+    #[default]
+    Inhibit,
+}
 
 /// The quantization tensor data parameters.
 #[derive(Clone, Debug)]

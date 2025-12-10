@@ -3,16 +3,13 @@ use burn_tensor::{
     ops::{ConvOptions, conv::calculate_conv_output_sizes},
 };
 use core::iter;
-#[cfg(test)]
-use cubecl::convolution::components::ConvSetupError;
-#[cfg(not(test))]
-use cubecl::convolution::components::ConvSetupError;
 use cubecl::std::{FastDivmod, FastDivmodArgs};
 use cubecl::{
     calculate_cube_count_elemwise, intrinsic,
     prelude::*,
     std::tensor::{TensorHandle, into_contiguous_pitched},
 };
+use cubek::convolution::components::ConvSetupError;
 
 use crate::{
     CubeRuntime,
@@ -109,7 +106,7 @@ pub(crate) fn batches_per_run(
     batch_size: usize,
     out_shape: usize,
 ) -> Result<usize, ConvSetupError> {
-    use cubecl::matmul::components::MatmulAvailabilityError;
+    use cubek::matmul::components::MatmulAvailabilityError;
 
     let cube_count_per_batch = out_shape.div_ceil(cubecl::PLANE_DIM_APPROX);
     let max_cube_count = u16::MAX as usize;
@@ -330,6 +327,10 @@ pub fn conv_im2col_1x1<R: CubeRuntime, const N: usize>(
     let in_shape = &input.shape[1..dim_c];
     let out_channels = weight.shape[0];
     let kernel_shape = &weight.shape[1..dim_c];
+
+    if kernel_shape.iter().any(|s| *s != 1) {
+        return Err(ConvSetupError::Unknown);
+    }
 
     let out_shape = calculate_conv_output_sizes(
         kernel_shape,

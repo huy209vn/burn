@@ -1,18 +1,17 @@
 use burn_tensor::DType;
-use cubecl::{
-    matmul::{
-        AcceleratedTileKind, PartialReadingStrategy, ReadingStrategy, Strategy,
-        components::MatmulKind,
-        kernels::layered::{
-            Selection, TileSizeSelection, double_buffering::DoubleBufferingArgs,
-            ordered_double_buffering::OrderedSelectionArgs, simple::SimpleArgs,
-            simple_unit::SimpleUnitSelectionArgs,
-        },
-        tune_key::{
-            MatmulAutotuneKey, MatmulElemType, MatmulGlobalScale, should_tune_double_buffering,
-        },
+use cubecl::tune::{LocalTuner, Tunable, TunableSet, TuneGroup, local_tuner};
+use cubek::matmul::{
+    AcceleratedTileKind, AsyncPartialReadingStrategy, PartialReadingStrategy, ReadingStrategy,
+    Strategy,
+    components::MatmulKind,
+    kernels::layered::{
+        Selection, TileSizeSelection, double_buffering::DoubleBufferingArgs,
+        ordered_double_buffering::OrderedSelectionArgs, simple::SimpleArgs,
+        simple_unit::SimpleUnitSelectionArgs,
     },
-    tune::{LocalTuner, Tunable, TunableSet, TuneGroup, local_tuner},
+    tune_key::{
+        MatmulAutotuneKey, MatmulElemType, MatmulGlobalScale, should_tune_double_buffering,
+    },
 };
 
 use crate::{
@@ -90,8 +89,19 @@ pub fn matmul_autotune<R: CubeRuntime>(
         let tma = TuneGroup::<MatmulAutotuneKey>::new("tma", |key| {
             // For large matmul, we set the max priority to TMA kernels, higher than any other
             // matmuls, since they are the best kernels no matter what.
+            //
+            // But only when all axis are large.
+            let max_axis = usize::max(key.definition.m, key.definition.n);
+            let max_axis = usize::max(key.definition.k, max_axis);
+
+            let min_axis = usize::min(key.definition.m, key.definition.n);
+            let min_axis = usize::min(key.definition.k, min_axis);
+
+            let skewed_factor = max_axis / min_axis;
+
             let priority_max = if matches!(key.analysis.kind, MatmulKind::General)
                 && matches!(key.analysis.scale_global, MatmulGlobalScale::Large)
+                && skewed_factor < 4
             {
                 PRIORITY_MAX
             } else {
@@ -163,7 +173,7 @@ pub fn matmul_autotune<R: CubeRuntime>(
                 ),
                 (
                     Strategy::DoubleUnit(Selection::Inferred(
-                        cubecl::matmul::kernels::layered::double_unit::DoubleUnitSelectionArgs {
+                        cubek::matmul::kernels::layered::double_unit::DoubleUnitSelectionArgs {
                             tile_size,
                         },
                     )),
@@ -250,6 +260,15 @@ pub fn matmul_autotune<R: CubeRuntime>(
                     None,
                 ),
                 (
+                    Strategy::Specialized {
+                        selection: Selection::Inferred(()),
+                        tile_kind,
+                        read_strategy: AsyncPartialReadingStrategy::Cyclic,
+                    },
+                    true,
+                    None,
+                ),
+                (
                     Strategy::Simple {
                         read_strategy: ReadingStrategy::Tma,
                         selection: Selection::Inferred(SimpleArgs { multi_rows: false }),
@@ -271,6 +290,7 @@ pub fn matmul_autotune<R: CubeRuntime>(
                     Strategy::Specialized {
                         selection: Selection::Inferred(()),
                         tile_kind,
+                        read_strategy: AsyncPartialReadingStrategy::Tma,
                     },
                     true,
                     Some(&tma),
@@ -324,15 +344,15 @@ fn create_key<R: CubeRuntime>(
         &lhs.strides,
         &rhs.strides,
         MatmulElemType {
-            elem: lhs.dtype.into(),
+            dtype: lhs.dtype.into(),
             quantized: matches!(lhs.dtype, DType::QFloat(_)),
         },
         MatmulElemType {
-            elem: rhs.dtype.into(),
+            dtype: rhs.dtype.into(),
             quantized: matches!(rhs.dtype, DType::QFloat(_)),
         },
         MatmulElemType {
-            elem: out.dtype.into(),
+            dtype: out.dtype.into(),
             quantized: matches!(out.dtype, DType::QFloat(_)),
         },
     )

@@ -9,14 +9,14 @@ use burn_fusion::stream::Context;
 use burn_tensor::DType;
 use cubecl::{
     AutotuneKey, CubeElement, CubeTuneId, Runtime,
-    matmul::{
-        AcceleratedTileKind,
-        components::MatmulKind,
-        tune_key::{
-            MatmulAutotuneKey, MatmulElemType, MatmulGlobalScale, should_tune_double_buffering,
-        },
-    },
     tune::{LocalTuner, Tunable, TunableSet, TuneGroup, local_tuner},
+};
+use cubek::matmul::{
+    AcceleratedTileKind,
+    components::MatmulKind,
+    tune_key::{
+        MatmulAutotuneKey, MatmulElemType, MatmulGlobalScale, should_tune_double_buffering,
+    },
 };
 use serde::{Deserialize, Serialize};
 
@@ -221,15 +221,15 @@ pub(crate) fn create_key<R: Runtime>(
         &lhs_strides,
         &rhs_strides,
         MatmulElemType {
-            elem: lhs.dtype.into(),
+            dtype: lhs.dtype.into(),
             quantized: matches!(lhs.dtype, DType::QFloat(_)),
         },
         MatmulElemType {
-            elem: rhs.dtype.into(),
+            dtype: rhs.dtype.into(),
             quantized: matches!(rhs.dtype, DType::QFloat(_)),
         },
         MatmulElemType {
-            elem: out.dtype.into(),
+            dtype: out.dtype.into(),
             quantized: matches!(out.dtype, DType::QFloat(_)),
         },
     );

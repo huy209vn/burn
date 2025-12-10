@@ -1,13 +1,7 @@
 use super::prelude::*;
-use burn::{
-    module::{Param, ParamId},
-    nn::LinearRecord,
-    record::{PrecisionSettings, Record},
-    tensor::Tensor,
-};
-use serde::Serialize;
+use burn_store::TensorSnapshot;
 
-impl<PS: PrecisionSettings> NodeCodegen<PS> for onnx_ir::linear::LinearNode {
+impl NodeCodegen for onnx_ir::linear::LinearNode {
     fn inputs(&self) -> &[Argument] {
         &self.inputs
     }
@@ -22,37 +16,54 @@ impl<PS: PrecisionSettings> NodeCodegen<PS> for onnx_ir::linear::LinearNode {
         let d_output = self.config.d_output.to_tokens();
         let bias = self.config.bias;
 
-        Some(Field::new(
-            self.name.clone(),
-            quote! { Linear<B> },
+        // ONNX Gemm stores weights as [d_output, d_input], which matches LinearLayout::Col.
+        // MatMul-sourced Linear stores weights as [d_input, d_output], matching LinearLayout::Row.
+        // Using the appropriate layout avoids data transposition during import.
+        let init_code = if self.config.transpose_weight {
+            quote! {
+                let #name = LinearConfig::new(#d_input, #d_output)
+                    .with_bias(#bias)
+                    .with_layout(LinearLayout::Col)
+                    .init(device);
+            }
+        } else {
             quote! {
                 let #name = LinearConfig::new(#d_input, #d_output)
                     .with_bias(#bias)
                     .init(device);
-            },
+            }
+        };
+
+        Some(Field::new(
+            self.name.clone(),
+            quote! { Linear<B> },
+            init_code,
         ))
     }
 
-    fn field_serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let device = Default::default();
-        let data_weights = extract_node_data(&self.inputs, 1).unwrap();
-        let data_bias = extract_node_data(&self.inputs, 2);
+    fn collect_snapshots(&self, field_name: &str) -> Vec<TensorSnapshot> {
+        use crate::burn::node_traits::create_lazy_snapshot;
 
-        let record = LinearRecord::<SerializationBackend> {
-            weight: Param::initialized(
-                ParamId::new(),
-                Tensor::from_data(data_weights.clone().convert::<PS::FloatElem>(), &device),
-            ),
-            bias: data_bias.as_ref().map(|bias| {
-                Param::initialized(
-                    ParamId::new(),
-                    Tensor::from_data(bias.clone().convert::<PS::FloatElem>(), &device),
-                )
-            }),
-        };
+        let mut snapshots = vec![];
 
-        let item = Record::into_item::<PS>(record);
-        item.serialize(serializer)
+        // Weight tensor (input index 1)
+        // No transposition needed - LinearLayout::Col handles ONNX [out, in] format
+        if let Some(weight_input) = self.inputs.get(1) {
+            let weight_path = format!("{}.weight", field_name);
+            if let Some(snapshot) = create_lazy_snapshot(weight_input, &weight_path, "Linear") {
+                snapshots.push(snapshot);
+            }
+        }
+
+        // Bias tensor (input index 2, optional)
+        if let Some(bias_input) = self.inputs.get(2) {
+            let bias_path = format!("{}.bias", field_name);
+            if let Some(snapshot) = create_lazy_snapshot(bias_input, &bias_path, "Linear") {
+                snapshots.push(snapshot);
+            }
+        }
+
+        snapshots
     }
 
     fn forward(&self, scope: &mut ScopeAtPosition<'_>) -> TokenStream {
@@ -68,6 +79,9 @@ impl<PS: PrecisionSettings> NodeCodegen<PS> for onnx_ir::linear::LinearNode {
     fn register_imports(&self, imports: &mut BurnImports) {
         imports.register("burn::nn::Linear");
         imports.register("burn::nn::LinearConfig");
+        if self.config.transpose_weight {
+            imports.register("burn::nn::LinearLayout");
+        }
     }
 }
 
@@ -81,7 +95,8 @@ mod tests {
 
     #[test]
     fn test_linear_forward() {
-        let config = LinearConfig::new(128, 64, true);
+        // transpose_weight=true simulates Gemm-sourced Linear
+        let config = LinearConfig::new(128, 64, true, true);
         let input = Argument::new(
             "input",
             ArgType::Tensor(TensorType::new(DType::F32, 2, None)),
@@ -120,7 +135,8 @@ mod tests {
 
     #[test]
     fn test_linear_forward_no_bias() {
-        let config = LinearConfig::new(128, 64, false);
+        // transpose_weight=false simulates MatMul-sourced Linear
+        let config = LinearConfig::new(128, 64, false, false);
         let input = Argument::new(
             "input",
             ArgType::Tensor(TensorType::new(DType::F32, 2, None)),

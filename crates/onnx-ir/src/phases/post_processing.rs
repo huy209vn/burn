@@ -41,78 +41,6 @@ fn rewire_argument(
     }
 }
 
-/// Recursively rewire subgraph inputs and outputs for control flow nodes
-///
-/// This handles If/Loop/Scan nodes which contain subgraphs that may reference
-/// Identity node outputs. We need to rewire these references before removing
-/// the Identity nodes.
-fn rewire_subgraph(
-    graph: &mut crate::ir::OnnxGraphBuilder,
-    rewire_map: &HashMap<String, String>,
-    output_arg_map: &HashMap<String, Argument>,
-) {
-    // Rewire subgraph inputs (these are references to parent scope values)
-    for input in &mut graph.inputs {
-        rewire_argument(input, rewire_map, output_arg_map);
-    }
-
-    // Rewire subgraph outputs
-    for output in &mut graph.outputs {
-        rewire_argument(output, rewire_map, output_arg_map);
-    }
-
-    // Rewire node inputs within the subgraph
-    for node in &mut graph.nodes {
-        for input in &mut node.inputs {
-            rewire_argument(input, rewire_map, output_arg_map);
-        }
-    }
-
-    // Recursively handle nested subgraphs in If/Loop/Scan nodes
-    for node in &mut graph.nodes {
-        rewire_node_subgraphs(node, rewire_map, output_arg_map);
-    }
-}
-
-/// Rewire subgraphs within a single node (recursive helper)
-fn rewire_node_subgraphs(
-    node: &mut RawNode,
-    rewire_map: &HashMap<String, String>,
-    output_arg_map: &HashMap<String, Argument>,
-) {
-    use crate::ir::AttributeValue;
-
-    match node.node_type {
-        NodeType::If => {
-            // If node has then_branch and else_branch - update both attrs and config
-            if let Some(then_attr) = node.attrs.get_mut("then_branch")
-                && let AttributeValue::GraphBuilder(subgraph) = then_attr
-            {
-                rewire_subgraph(subgraph, rewire_map, output_arg_map);
-            }
-            if let Some(else_attr) = node.attrs.get_mut("else_branch")
-                && let AttributeValue::GraphBuilder(subgraph) = else_attr
-            {
-                rewire_subgraph(subgraph, rewire_map, output_arg_map);
-            }
-
-            // Note: Configs are extracted on-demand from attributes by processors.
-            // Rewiring the branch attributes above is sufficient; no separate config update needed.
-        }
-        NodeType::Loop | NodeType::Scan => {
-            // Loop and Scan nodes have a body graph
-            if let Some(body_attr) = node.attrs.get_mut("body")
-                && let AttributeValue::GraphBuilder(subgraph) = body_attr
-            {
-                rewire_subgraph(subgraph, rewire_map, output_arg_map);
-            }
-        }
-        _ => {
-            // Other node types don't have subgraphs
-        }
-    }
-}
-
 /// Analyze which Identity nodes can be removed and create rewiring map
 fn plan_identity_elimination(
     nodes: &[RawNode],
@@ -218,26 +146,19 @@ fn apply_identity_elimination(
         resolved_rewire_map.insert(output.clone(), current);
     }
 
-    // Step 3: Rewire subgraphs in control flow nodes (If/Loop/Scan)
-    // This must happen BEFORE rewiring regular node inputs to ensure subgraph
-    // inputs/outputs that reference Identity node outputs are properly updated
-    for node in nodes.iter_mut() {
-        rewire_node_subgraphs(node, &resolved_rewire_map, &output_arg_map);
-    }
-
-    // Step 4: Rewire node inputs
+    // Step 3: Rewire node inputs
     for node in nodes.iter_mut() {
         for input in &mut node.inputs {
             rewire_argument(input, &resolved_rewire_map, &output_arg_map);
         }
     }
 
-    // Step 5: Rewire graph outputs
+    // Step 4: Rewire graph outputs
     for output in outputs.iter_mut() {
         rewire_argument(output, &resolved_rewire_map, &output_arg_map);
     }
 
-    // Step 6: Remove Identity nodes
+    // Step 5: Remove Identity nodes
     *nodes = nodes
         .drain(..)
         .enumerate()
@@ -251,21 +172,19 @@ fn apply_identity_elimination(
 pub(crate) fn post_process(
     state_rc: &Rc<RefCell<GraphState>>,
 ) -> (Vec<RawNode>, Vec<Argument>, Vec<Argument>) {
-    // Extract graph data while preserving tensor_store and node_output_map
+    // Extract graph data while preserving tensor_store, constant_map, and node_output_map
     let (mut nodes, inputs, mut outputs, node_output_map) = {
         let mut state = state_rc.borrow_mut();
-        let tensor_data_clone = state.tensor_store.clone_data();
-        let next_tensor_id = state.tensor_store.next_id();
 
-        // Clone node_output_map BEFORE consuming the state
+        // Clone Rc references BEFORE consuming - these are cheap Rc clones, not data clones
+        let tensor_store_rc = state.tensor_store.clone();
+        let constant_map_rc = state.constant_map_rc();
         let node_output_map = state.node_output_map().clone();
 
         let result = std::mem::replace(&mut *state, GraphState::new(&[], &[], &[], &[])).consume();
 
-        // Restore tensor_store for .value() access
-        state
-            .tensor_store
-            .restore_data(tensor_data_clone, next_tensor_id);
+        // Restore the Rc references to the new empty GraphState (no data copying)
+        state.restore_stores(tensor_store_rc, constant_map_rc);
         (result.0, result.1, result.2, node_output_map)
     };
 
@@ -281,12 +200,28 @@ pub(crate) fn post_process(
     {
         let mut state = state_rc.borrow_mut();
         state.processed_nodes = nodes.clone();
+        let value_store = state.build_value_store();
         drop(state);
 
         // Re-attach value_store and lift constants
+        // For outer-scope Static arguments (constants converted from parent graph), preserve
+        // their existing value_store since it contains the tensor data they reference.
         for node in &mut nodes {
             for arg in &mut node.inputs {
-                arg.value_store = Some(state_rc.clone());
+                // Preserve value_store for Static arguments that already have a store containing their data
+                let should_preserve =
+                    if let crate::ir::ValueSource::Static(data_id) = arg.value_source {
+                        arg.value_store
+                            .as_ref()
+                            .map(|store| store.get_tensor_data(data_id).is_some())
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    };
+
+                if !should_preserve {
+                    arg.set_value_store(value_store.clone());
+                }
             }
 
             let registry = get_processor_registry();

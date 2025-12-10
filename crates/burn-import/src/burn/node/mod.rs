@@ -4,6 +4,9 @@
 // Prelude module with common imports for node implementations
 pub(crate) mod prelude;
 
+// Shared helpers for subgraph code generation (If, Loop, Scan)
+mod subgraph_helper;
+
 // Test helpers for node code generation tests
 #[cfg(test)]
 pub(crate) mod test_helpers;
@@ -72,6 +75,7 @@ pub(crate) mod log_softmax;
 pub(crate) mod loop_node;
 pub(crate) mod lower;
 pub(crate) mod lower_equal;
+pub(crate) mod lstm;
 pub(crate) mod matmul;
 pub(crate) mod matmul_integer;
 pub(crate) mod max;
@@ -125,6 +129,4 @@ pub(crate) mod where_op;
 
 // Node codegen traits and utilities are in parent module
 // Re-export them here for convenience
-pub(crate) use super::node_traits::{
-    NodeCodegen, SerializationBackend, arg_to_ident, extract_node_data,
-};
+pub(crate) use super::node_traits::{NodeCodegen, arg_to_ident};
