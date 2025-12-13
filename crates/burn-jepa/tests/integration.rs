@@ -1,126 +1,166 @@
-//! Integration tests for the `burn-jepa` crate.
-//!
-//! These tests verify that different modules and components of the JEPA model
-//! work together correctly, simulating end-to-end scenarios.
+//! Rigorous and complete integration tests for the `burn-jepa` crate.
 
-use burn::optim::{AdamConfig, AdamW};
-use burn::tensor::backend::Backend;
-use burn::tensor::Tensor;
-use burn_ndarray::NdArrayBackend;
+#[cfg(test)]
+mod tests {
+    use burn::backend::{Autodiff, Backend};
+    use burn::module::{Module, ParamId};
+    use burn::tensor::{self, Tensor, Data};
+    use burn_jepa::model::{Jepa, JepaBatch, JepaConfig};
+    use burn_jepa::test_utils::generate_dummy_image;
+    use std::collections::HashMap;
 
-// TODO: Import necessary modules from the crate's public API.
-// use crate::{JepaConfig, JepaTrainingEngine};
-// use crate::test_utils::{generate_dummy_image, get_test_backend};
-// use crate::data::datasets::JepaDataset; // Assuming a dummy dataset is needed
+    // Trait alias for backend trait bounds
+    trait TestBackend: Backend + burn::tensor::backend::AutodiffBackend {}
+    impl<B: Backend + burn::tensor::backend::AutodiffBackend> TestBackend for B {}
 
-/// Type alias for the backend used in tests.
-type TestBackend = NdArrayBackend<f32>;
+    // Macro to generate tests for different backends
+    macro_rules! test_backend {
+        ($backend:ty) => {
+            // Forward Pass Test
+            #[test]
+            fn test_jepa_forward_pass() {
+                test_jepa_forward_pass_impl::<$backend>();
+            }
 
-#[test]
-#[ignore = "Needs model implementation"]
-fn test_jepa_forward_pass() {
-    let device = Default::default(); // Use default device for NdArrayBackend
-    // TODO: Create a minimal JepaConfig for testing.
-    // let config = JepaConfig::new(
-    //     VisionTransformerConfig::new(224, 16, 3, 768, 1, 1, 0.0, 4.0), // Minimal encoder
-    //     PredictorConfig::new(768, 384, 1, 1, 0.0, 4.0), // Minimal predictor
-    //     PatchingConfig::new(224, 16, 3, 768),
-    //     MaskingConfig::new(1, [0.1, 0.2], [0.8, 1.2]),
-    //     0.996,
-    //     1.0,
-    // );
-    //
-    // let model = config.init::<TestBackend>();
-    //
-    // let dummy_images = generate_dummy_image::<TestBackend>(
-    //     4, 3, 224, 224, &device
-    // );
-    //
-    // let loss = model.forward(dummy_images);
-    //
-    // // Assertions:
-    // assert_eq!(loss.dims(), &[1]); // Loss should be a scalar
-    // assert!(loss.into_scalar() > 0.0); // Loss should be positive
-    todo!();
-}
+            // EMA Update Test
+            #[test]
+            fn test_jepa_ema_update() {
+                test_jepa_ema_update_impl::<$backend>();
+            }
 
-#[test]
-#[ignore = "Needs model implementation and parameter access"]
-fn test_jepa_ema_update() {
-    let device = Default::default();
-    // TODO: Create a minimal JepaConfig.
-    // let config = JepaConfig::new(
-    //     VisionTransformerConfig::new(224, 16, 3, 768, 1, 1, 0.0, 4.0),
-    //     PredictorConfig::new(768, 384, 1, 1, 0.0, 4.0),
-    //     PatchingConfig::new(224, 16, 3, 768),
-    //     MaskingConfig::new(1, [0.1, 0.2], [0.8, 1.2]),
-    //     0.996,
-    //     1.0,
-    // );
-    //
-    // let mut model = config.init::<TestBackend>();
-    //
-    // // Capture initial teacher parameters (e.g., first parameter of the first block)
-    // // TODO: This requires direct access to model parameters, which might need to be exposed or mocked.
-    // // let initial_teacher_param = model.target_encoder.blocks.layers[0].some_param.val().clone();
-    //
-    // // Simulate an optimizer step (e.g., by directly modifying a student parameter)
-    // // This is a mock to ensure EMA has something to update from.
-    // // TODO: Modify a student parameter.
-    // // model.context_encoder.blocks.layers[0].some_param.set_data(
-    // //    model.context_encoder.blocks.layers[0].some_param.val().add_scalar(1.0)
-    // // );
-    //
-    // let momentum = 0.999; // High momentum for a noticeable but small change
-    // model.ema_update(momentum);
-    //
-    // // Capture updated teacher parameters
-    // // let updated_teacher_param = model.target_encoder.blocks.layers[0].some_param.val().clone();
-    //
-    // // Assertions:
-    // // TODO: Ensure teacher parameter has changed
-    // // assert_ne!(initial_teacher_param.into_scalar(), updated_teacher_param.into_scalar());
-    // // TODO: Ensure teacher parameter is not identical to student parameter (unless momentum is 0)
-    // // assert_ne!(model.context_encoder.blocks.layers[0].some_param.val().into_scalar(), updated_teacher_param.into_scalar());
-    todo!();
-}
+            // Training Step Test
+            #[test]
+            fn test_training_step() {
+                test_training_step_impl::<Autodiff<$backend>>();
+            }
+        };
+    }
 
-#[test]
-#[ignore = "Requires full training loop setup and dummy dataset"]
-fn test_training_engine_integration() {
-    let device = Default::default();
-    // TODO: Create a minimal JepaConfig.
-    // let config = JepaConfig::new(
-    //     VisionTransformerConfig::new(224, 16, 3, 768, 1, 1, 0.0, 4.0),
-    //     PredictorConfig::new(768, 384, 1, 1, 0.0, 4.0),
-    //     PatchingConfig::new(224, 16, 3, 768),
-    //     MaskingConfig::new(1, [0.1, 0.2], [0.8, 1.2]),
-    //     0.996,
-    //     1.0,
-    // );
-    //
-    // let model = config.init::<TestBackend>();
-    // let optimizer = AdamConfig::new().init::<TestBackend>();
-    //
-    // // TODO: Create a dummy JepaDataset for the training engine.
-    // // let dummy_dataset = JepaDataset::new_dummy(config.clone(), &device);
-    // // let dataloader = DataLoader::new(dummy_dataset, 2, &device); // Batch size 2
-    //
-    // let num_epochs = 1;
-    // let log_interval = 1;
-    //
-    // // TODO: Call the training engine.
-    // // let trained_model = JepaTrainingEngine::train(
-    // //     model,
-    // //     optimizer,
-    // //     dataloader,
-    // //     &config,
-    // //     num_epochs,
-    // //     log_interval,
-    // // );
-    //
-    // // Assertions:
-    // // TODO: Assert some property of the trained model, e.g., that training ran without panicking.
-    // // More advanced assertions would involve checking if loss decreased or specific parameters changed.
-    todo!();
+    // Generic implementation for the forward pass test
+    fn test_jepa_forward_pass_impl<B: TestBackend>() {
+        let device = Default::default();
+        let config = JepaConfig {
+            image_size: 32,
+            patch_size: 16,
+            embed_dim: 64,
+            n_layers: 2,
+            n_heads: 4,
+            ..JepaConfig::new()
+        };
+        let model = config.init::<B>(&device);
+        let dummy_images = generate_dummy_image::<B>(2, 3, 32, 32, &device);
+        let batch = JepaBatch {
+            images: dummy_images,
+        };
+
+        let output = model.forward_step(batch);
+        let loss = output.loss;
+
+        assert_eq!(loss.dims(), [1]);
+        assert!(loss.into_scalar() > 0.0);
+    }
+
+    // Generic implementation for the EMA update test
+    fn test_jepa_ema_update_impl<B: TestBackend>() {
+        let device = Default::default();
+        let config = JepaConfig {
+            image_size: 32,
+            patch_size: 16,
+            embed_dim: 64,
+            n_layers: 2,
+            n_heads: 4,
+            ..JepaConfig::new()
+        };
+        let model = config.init::<B>(&device);
+
+        // Get initial teacher params
+        let initial_teacher_params: HashMap<_, _> =
+            model.teacher_encoder.clone().named_parameters().collect();
+
+        // Create a modified student encoder
+        let student_encoder_modified = model.student_encoder.clone().map_params(|mut params| {
+            params.data = params.data + 1.0;
+            params
+        });
+
+        // Replace the student encoder and update the teacher
+        let model_modified_student = model.clone().with_student_encoder(student_encoder_modified);
+        let model_updated = model_modified_student.ema_update(0.996);
+
+        // Get updated teacher params
+        let updated_teacher_params: HashMap<_, _> =
+            model_updated.teacher_encoder.named_parameters().collect();
+
+        // Ensure teacher params have changed and are not equal to student params
+        for (id, initial_param) in initial_teacher_params.iter() {
+            let updated_param = updated_teacher_params.get(id).unwrap();
+
+            // Check they are not the same.
+            assert_ne!(initial_param.val().to_data(), updated_param.val().to_data());
+
+            // Check that the updated param has moved towards the student param.
+            let student_param = model_updated.student_encoder.get_parameter(id).unwrap();
+            let initial_diff = (student_param.val() - initial_param.val()).abs().sum().into_scalar();
+            let updated_diff = (student_param.val() - updated_param.val()).abs().sum().into_scalar();
+            
+            assert!(updated_diff < initial_diff);
+        }
+    }
+
+    // Generic implementation for the training step test
+    fn test_training_step_impl<B: TestBackend>() {
+        use burn::train::{TrainOutput, TrainStep};
+
+        let device = Default::default();
+        let config = JepaConfig {
+            image_size: 32,
+            patch_size: 16,
+            embed_dim: 64,
+            n_layers: 2,
+            n_heads: 4,
+            ..JepaConfig::new()
+        };
+        let model = config.init::<B>(&device);
+
+        let dummy_images = generate_dummy_image::<B>(2, 3, 32, 32, &device);
+        let batch = JepaBatch {
+            images: dummy_images,
+        };
+
+        // Perform a training step
+        let train_output: TrainOutput<B, _, _> = model.step(batch);
+        
+        // Check that student encoder has grads
+        let mut student_grad_norm = 0.0;
+        for param in model.student_encoder.parameters() {
+            if let Some(grad) = train_output.grads.get(&param.id()) {
+                student_grad_norm += grad.abs().sum().into_scalar();
+            }
+        }
+        assert!(student_grad_norm > 0.0);
+
+        // Check that teacher encoder does not have grads
+        for param in model.teacher_encoder.parameters() {
+            assert!(!train_output.grads.get(&param.id()).is_some());
+        }
+    }
+
+    // Backend-specific test configurations
+    #[cfg(not(feature = "cuda"))]
+    mod cpu {
+        use super::*;
+        use burn::backend::ndarray::NdArray;
+
+        test_backend!(NdArray<f32>);
+    }
+
+    #[cfg(feature = "cuda")]
+    mod cuda {
+        use super::*;
+        use burn::backend::cuda::Cuda;
+
+        type CudaBackend = Cuda<f32, i64>;
+
+        test_backend!(CudaBackend);
+    }
 }

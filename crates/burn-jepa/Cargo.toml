@@ -29,6 +29,8 @@ std = ["burn/std", "burn-core/std", "burn-nn/std", "burn-autodiff/std", "rand/st
 cuda = ["burn/cuda"]
 cubecl = ["burn/cubecl"]
 
+train = []
+
 
 [[test]]
 name = "unit_mask"

@@ -7,12 +7,7 @@
 use burn::tensor::{backend::Backend, Distribution, Int, Tensor};
 use burn_ndarray::NdArray; // Common for CPU testing
 
-// TODO: Define a function to get a test backend.
-//       The NdArray backend is often used for CPU-based tests.
-// #[cfg(feature = "std")] // Typically conditioned on "std" feature for full backend functionality
-// pub fn get_test_backend() -> NdArrayBackend<f32> {
-//     NdArrayBackend::new()
-// }
+
 
 /// # Generates a dummy image tensor.
 ///
@@ -36,9 +31,11 @@ pub fn generate_dummy_image<B: Backend>(
     width: usize,
     device: &B::Device,
 ) -> Tensor<B, 4> {
-    // TODO: Implement dummy image generation.
-    // Tensor::random([batch_size, channels, height, width], Distribution::Standard, device)
-    todo!();
+    Tensor::random(
+        [batch_size, channels, height, width],
+        Distribution::Standard,
+        device,
+    )
 }
 
 /// # Generates dummy mask indices.
@@ -61,8 +58,10 @@ pub fn generate_dummy_mask_indices<B: Backend>(
     max_index: usize,
     device: &B::Device,
 ) -> Tensor<B, 2, Int> {
-    // TODO: Implement dummy mask index generation.
-    // Tensor::random([batch_size, num_indices], Distribution::Uniform(0.0, max_index as f64), device)
-    //       .into_int()
-    todo!();
+    Tensor::random(
+        [batch_size, num_indices],
+        Distribution::Uniform(0.0, max_index as f64),
+        device,
+    )
+    .into_int()
 }

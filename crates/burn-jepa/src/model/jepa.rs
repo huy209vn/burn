@@ -106,7 +106,7 @@ impl JepaConfig {
 // --- Model & Step Output ---
 // =================================================================
 
-#[derive(Module, Debug)]
+#[derive(Module, Debug, Clone)]
 pub struct Jepa<B: Backend> {
     pub patch_embed: PatchEmbed<B>,
     pub student_encoder: VisionTransformer<B>,
@@ -126,6 +126,12 @@ pub struct JepaStepOutput<B: Backend> {
 }
 
 impl<B: Backend> Jepa<B> {
+    /// Returns a new model with the given student encoder.
+    pub fn with_student_encoder(mut self, student_encoder: VisionTransformer<B>) -> Self {
+        self.student_encoder = student_encoder;
+        self
+    }
+    
     /// Forward pass for training/validation
     ///
     /// # Arguments
