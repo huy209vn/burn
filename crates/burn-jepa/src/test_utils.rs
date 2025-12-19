@@ -5,9 +5,6 @@
 //! reproducibility across unit and integration tests.
 
 use burn::tensor::{backend::Backend, Distribution, Int, Tensor};
-use burn_ndarray::NdArray; // Common for CPU testing
-
-
 
 /// # Generates a dummy image tensor.
 ///
@@ -33,7 +30,7 @@ pub fn generate_dummy_image<B: Backend>(
 ) -> Tensor<B, 4> {
     Tensor::random(
         [batch_size, channels, height, width],
-        Distribution::Standard,
+        Distribution::Default,
         device,
     )
 }
@@ -58,10 +55,10 @@ pub fn generate_dummy_mask_indices<B: Backend>(
     max_index: usize,
     device: &B::Device,
 ) -> Tensor<B, 2, Int> {
-    Tensor::random(
+    Tensor::<B, 2>::random(
         [batch_size, num_indices],
         Distribution::Uniform(0.0, max_index as f64),
         device,
     )
-    .into_int()
+    .int()
 }

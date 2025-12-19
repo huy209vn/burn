@@ -20,7 +20,7 @@ use burn::tensor::Tensor;
 ///
 /// * `predictions`: Output from the predictor, shape `[B, N_tgt, D]`.
 /// * `targets`: Ground truth target representations from the teacher encoder, shape `[B, N_tgt, D]`.
-///              These targets are assumed to have `stop_gradient` applied to them.
+///   These targets are assumed to have `stop_gradient` applied to them.
 /// * `var_reg_weight`: Weight for variance regularization loss (0.0 = disabled). Typical: 1.0-10.0.
 ///
 /// # Returns
@@ -93,9 +93,7 @@ fn variance_loss<B: Backend>(tensor: Tensor<B, 3>) -> Tensor<B, 1> {
 
     // Loss = -log(std + eps) encourages high variance
     // We use mean across dimensions to get a scalar
-    let loss = std.log().neg().mean();
-
-    loss
+    std.log().neg().mean()
 }
 
 /// # L2 Normalizes a Tensor.
@@ -120,8 +118,5 @@ pub fn l2_normalize<B: Backend, const D: usize>(tensor: Tensor<B, D>) -> Tensor<
     // 3. Divide the tensor by its norm. We need to unsqueeze the norm to match
     //    the dimensions of the tensor for broadcasting.
     let norm_unsqueezed = norm.unsqueeze();
-    let normalized_tensor = tensor.div(norm_unsqueezed);
-
-    // 4. Return the normalized tensor.
-    normalized_tensor
+    tensor.div(norm_unsqueezed)
 }

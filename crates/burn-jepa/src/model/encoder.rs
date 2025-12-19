@@ -4,7 +4,7 @@
 //! Burn's TransformerEncoder design patterns for flexibility and production use.
 
 use burn::config::Config;
-use burn::module::{Content, DisplaySettings, Initializer, Module, ModuleDisplay};
+use burn::module::{Content, DisplaySettings, Module, ModuleDisplay};
 use burn::nn::{
     Gelu,
     attention::{MhaInput, MultiHeadAttention, MultiHeadAttentionConfig},

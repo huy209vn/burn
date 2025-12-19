@@ -1,14 +1,17 @@
 //! Main JEPA module and configuration, following the `Config::init()` pattern.
 
+use burn::backend::NdArray;
 use burn::config::Config;
 use burn::module::Module;
 use burn::tensor::backend::{AutodiffBackend, Backend};
-use burn::tensor::{Int, Tensor};
+use burn::tensor::{Int, Tensor, Transaction};
+use burn::train::ItemLazy;
+use burn::train::metric::{Adaptor, LossInput};
 use burn::train::{TrainOutput, TrainStep, ValidStep};
 
 use super::encoder::{VisionTransformer, VisionTransformerConfig};
 use super::loss::jepa_loss;
-use super::mask::{sample_block_masks, MaskingConfig, MaskOutput};
+use super::mask::{sample_block_masks, MaskingConfig};
 use super::patch_embed::{PatchEmbed, PatchEmbedConfig};
 use super::predictor::{Predictor, PredictorConfig};
 
@@ -106,7 +109,7 @@ impl JepaConfig {
 // --- Model & Step Output ---
 // =================================================================
 
-#[derive(Module, Debug, Clone)]
+#[derive(Module, Debug)]
 pub struct Jepa<B: Backend> {
     pub patch_embed: PatchEmbed<B>,
     pub student_encoder: VisionTransformer<B>,
@@ -123,6 +126,33 @@ pub struct Jepa<B: Backend> {
 #[derive(Debug, Clone)]
 pub struct JepaStepOutput<B: Backend> {
     pub loss: Tensor<B, 1>,
+}
+
+/// Adaptor implementation for LossMetric to enable burn-train TUI integration
+impl<B: Backend> Adaptor<LossInput<B>> for JepaStepOutput<B> {
+    fn adapt(&self) -> LossInput<B> {
+        LossInput::new(self.loss.clone())
+    }
+}
+
+/// ItemLazy implementation for burn-train TUI compatibility
+/// This allows the output to be synchronized from GPU to CPU for metrics processing
+impl<B: Backend> ItemLazy for JepaStepOutput<B> {
+    type ItemSync = JepaStepOutput<NdArray>;
+
+    fn sync(self) -> JepaStepOutput<NdArray> {
+        let [loss] = Transaction::default()
+            .register(self.loss)
+            .execute()
+            .try_into()
+            .expect("Correct amount of tensor data");
+
+        let device = &Default::default();
+
+        JepaStepOutput {
+            loss: Tensor::from_data(loss, device),
+        }
+    }
 }
 
 impl<B: Backend> Jepa<B> {
@@ -145,7 +175,7 @@ impl<B: Backend> Jepa<B> {
 
         // 1. Patchify images: [B, C, H, W] -> [B, N, D]
         let patches = self.patch_embed.forward(batch.images);
-        let [_, num_patches, embed_dim] = patches.dims();
+        let [_, _num_patches, _embed_dim] = patches.dims();
 
         // 2. Generate masks
         let grid_h = height / self.patch_size;
@@ -195,7 +225,7 @@ impl<B: Backend> Jepa<B> {
     /// # Returns
     /// * Position embeddings at the specified indices [B, N_indices, D]
     fn gather_pos_embed(&self, indices: Tensor<B, 2, Int>) -> Tensor<B, 3> {
-        let [batch_size, n_indices] = indices.dims();
+        let [batch_size, _n_indices] = indices.dims();
         let pos_embed = self.patch_embed.pos_embed.val(); // [1, N, D]
         let embed_dim = pos_embed.dims()[2];
 
@@ -223,7 +253,7 @@ impl<B: Backend> Jepa<B> {
     /// * Gathered tensor values [B, N_indices, D]
     fn gather_by_indices(&self, tensor: Tensor<B, 3>, indices: Tensor<B, 2, Int>) -> Tensor<B, 3> {
         let [_batch_size, _, embed_dim] = tensor.dims();
-        let [_, n_indices] = indices.dims();
+        let [_, _n_indices] = indices.dims();
 
         // Expand indices to match output shape: [B, N_indices] -> [B, N_indices, D]
         let indices_expanded = indices.unsqueeze_dim(2).repeat_dim(2, embed_dim);

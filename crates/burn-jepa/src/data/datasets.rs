@@ -1,6 +1,6 @@
 //! Dataset definitions and data loading utilities for JEPA.
 
-use burn::data::dataset::{Dataset, InMemDataset};
+use burn::data::dataset::Dataset;
 use burn::tensor::backend::Backend;
 use burn::tensor::Tensor;
 use std::marker::PhantomData;

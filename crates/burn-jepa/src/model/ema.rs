@@ -40,11 +40,9 @@ impl CosineAnnealingMomentum {
             return self.end_momentum;
         }
         let t = step as f64;
-        let T = total_steps as f64;
-        let cos_term = (PI * t / T).cos();
-        let momentum =
-            self.end_momentum - (self.end_momentum - self.base_momentum) * (cos_term + 1.0) / 2.0;
-        momentum
+        let total = total_steps as f64;
+        let cos_term = (PI * t / total).cos();
+        self.end_momentum - (self.end_momentum - self.base_momentum) * (cos_term + 1.0) / 2.0
     }
 }
 

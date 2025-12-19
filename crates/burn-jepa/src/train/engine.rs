@@ -55,7 +55,7 @@ pub fn create_optimizer(config: &TrainingConfig) -> AdamWConfig {
 /// assert_eq!(total_steps, 100);
 /// ```
 pub fn calculate_total_steps(num_samples: usize, batch_size: usize, num_epochs: usize) -> usize {
-    let steps_per_epoch = (num_samples + batch_size - 1) / batch_size; // Ceiling division
+    let steps_per_epoch = num_samples.div_ceil(batch_size);
     steps_per_epoch * num_epochs
 }
 
