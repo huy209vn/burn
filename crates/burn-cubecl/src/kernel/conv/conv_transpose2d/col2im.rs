@@ -9,7 +9,7 @@ use crate::{
     ops::{numeric::empty_device_dtype, reshape, swap_dims},
     tensor::CubeTensor,
 };
-use burn_tensor::{
+use burn_backend::{
     Shape,
     ops::{ConvTransposeOptions, conv::calculate_conv_transpose_output_size},
 };
@@ -58,7 +58,11 @@ pub fn conv_transpose2d_col2im<R: CubeRuntime>(
     );
     let im_channels = im_ch_per_group * groups;
 
-    let batches_per_run = batches_per_run(batch_size, input_h * input_w)?;
+    let batches_per_run = batches_per_run(
+        batch_size,
+        input_h * input_w,
+        input.client.properties().hardware.plane_size_max as usize,
+    )?;
     let col_shape_0 = im_ch_per_group * kernel_h * kernel_w;
 
     let weight = reshape(
@@ -193,8 +197,8 @@ fn col2im<R: CubeRuntime>(
     let num_elems = out.shape.num_elements();
 
     let vectorization = 1;
-    let cube_dim = CubeDim::default();
-    let cube_count = calculate_cube_count_elemwise(num_elems, cube_dim);
+    let cube_dim = CubeDim::new(&columns.client, num_elems);
+    let cube_count = calculate_cube_count_elemwise(&columns.client, num_elems, cube_dim);
 
     unsafe {
         col2im_kernel::launch_unchecked(

@@ -1,13 +1,12 @@
 use crate::{CubeRuntime, kernel, tensor::CubeTensor};
-use burn_std::tensor::{ReshapeAction, contiguous_strides, reshape_action};
-use burn_tensor::{
-    DType, Shape, TensorData,
-    backend::ExecutionError,
-    quantization::{QTensorPrimitive, QuantLevel, params_shape},
+use burn_backend::{
+    DType, ExecutionError, QTensorPrimitive, Shape, TensorData,
+    quantization::{QuantLevel, params_shape},
 };
-use burn_tensor::{TensorMetadata, ops::unfold::calculate_unfold_shape};
-use cubecl::quant::scheme::BlockSize;
-use cubecl::{server::CopyDescriptor, tensor_vectorization_factor};
+use burn_backend::{TensorMetadata, ops::unfold::calculate_unfold_shape};
+use burn_std::tensor::{ReshapeAction, contiguous_strides, reshape_action};
+use cubecl::server::CopyDescriptor;
+use cubecl::{quant::scheme::BlockSize, tensor_line_size_parallel};
 
 pub(crate) fn from_data<R: CubeRuntime>(data: TensorData, device: &R::Device) -> CubeTensor<R> {
     let shape: Shape = (&data.shape).into();
@@ -42,6 +41,10 @@ pub fn into_data_sync<R: CubeRuntime>(tensor: CubeTensor<R>) -> TensorData {
     burn_std::future::block_on(into_data(tensor)).unwrap()
 }
 
+#[cfg_attr(
+    feature = "tracing",
+    tracing::instrument(level = "trace", skip(tensor, device))
+)]
 pub(crate) fn to_device<R: CubeRuntime>(
     tensor: CubeTensor<R>,
     device: &R::Device,
@@ -94,7 +97,7 @@ pub(crate) fn swap_dims<R: CubeRuntime>(
         qparams.scales.shape.dims.swap(dim1, dim2);
         qparams.scales.strides.swap(dim1, dim2);
 
-        tensor.dtype = burn_tensor::DType::QFloat(scheme.with_level(QuantLevel::block(&block_size)))
+        tensor.dtype = DType::QFloat(scheme.with_level(QuantLevel::block(&block_size)))
     }
 
     tensor
@@ -129,7 +132,7 @@ pub fn permute<R: CubeRuntime>(mut tensor: CubeTensor<R>, axes: &[usize]) -> Cub
         qparams.scales.strides = axes.iter().map(|i| qparams.scales.strides[*i]).collect();
         qparams.scales.shape = qparams.scales.shape.clone().permute(axes).unwrap();
 
-        tensor.dtype = burn_tensor::DType::QFloat(scheme.with_level(QuantLevel::block(&block_size)))
+        tensor.dtype = DType::QFloat(scheme.with_level(QuantLevel::block(&block_size)))
     }
 
     tensor
@@ -147,6 +150,18 @@ pub fn permute_nchw_to_nhwc<R: CubeRuntime>(tensor: CubeTensor<R>) -> CubeTensor
     permute(tensor, &dims)
 }
 
+/// Permute a shape's dimensions from NCHW to NHWC, or the N-dimensional equivalent
+pub fn permute_nchw_to_nhwc_shape(shape: Shape) -> Shape {
+    let rank = shape.num_dims();
+    let c_dim = 1;
+
+    let mut dims = vec![0];
+    dims.extend(2..rank);
+    dims.push(c_dim);
+
+    shape.permute(&dims).expect("Shape permute should succeed")
+}
+
 /// Permute a tensor's dimensions from NHWC to NCHW, or the N-dimensional equivalent
 pub fn permute_nhwc_to_nchw<R: CubeRuntime>(tensor: CubeTensor<R>) -> CubeTensor<R> {
     let rank = tensor.shape.num_dims();
@@ -157,6 +172,18 @@ pub fn permute_nhwc_to_nchw<R: CubeRuntime>(tensor: CubeTensor<R>) -> CubeTensor
     dims.extend(1..c_dim);
 
     permute(tensor, &dims)
+}
+
+/// Permute a shape's dimensions from NHWC to NCHW, or the N-dimensional equivalent
+pub fn permute_nhwc_to_nchw_shape(shape: Shape) -> Shape {
+    let rank = shape.num_dims();
+    let c_dim = rank - 1;
+
+    let mut dims = vec![0];
+    dims.push(c_dim);
+    dims.extend(1..c_dim);
+
+    shape.permute(&dims).expect("Shape permute should succeed")
 }
 
 pub(crate) fn expand<R: CubeRuntime>(tensor: CubeTensor<R>, target_shape: Shape) -> CubeTensor<R> {
@@ -307,23 +334,27 @@ pub fn q_reshape<R: CubeRuntime>(mut tensor: CubeTensor<R>, shape: Shape) -> Cub
 }
 
 pub(crate) fn max_line_size<R: CubeRuntime>(tensor: &CubeTensor<R>) -> u8 {
-    tensor_vectorization_factor(
-        R::supported_line_sizes(),
-        &tensor.shape.dims,
+    tensor_line_size_parallel(
+        tensor
+            .client
+            .io_optimized_line_sizes_unchecked(tensor.dtype.size()),
+        &tensor.shape,
         &tensor.strides,
-        tensor.shape.num_dims() - 1,
+        tensor.shape.len() - 1,
     )
 }
 
-pub(crate) fn max_line_size_many<R: CubeRuntime>(tensors: &[&CubeTensor<R>], dim: usize) -> u8 {
+pub(crate) fn max_line_size_many<R: CubeRuntime>(tensors: &[&CubeTensor<R>], axis: usize) -> u8 {
     let vec = tensors
         .iter()
         .map(|tensor| {
-            tensor_vectorization_factor(
-                R::supported_line_sizes(),
-                &tensor.shape.dims,
+            tensor_line_size_parallel(
+                tensor
+                    .client
+                    .io_optimized_line_sizes_unchecked(tensor.dtype.size()),
+                &tensor.shape,
                 &tensor.strides,
-                dim,
+                axis,
             )
         })
         .min();

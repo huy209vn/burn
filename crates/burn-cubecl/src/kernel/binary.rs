@@ -4,6 +4,7 @@ use crate::{
     ops::{max_line_size, numeric::empty_device_dtype},
     tensor::CubeTensor,
 };
+use burn_backend::{bf16, f16};
 use cubecl::{
     calculate_cube_count_elemwise, intrinsic,
     prelude::*,
@@ -106,14 +107,14 @@ impl<N: Numeric> BinaryOp<N> for PowOp {
             if let cubecl::ir::ElemType::Float(kind) = elem {
                 match kind {
                     cubecl::ir::FloatKind::F16 => {
-                        let lhs = <Line<half::f16> as Cast>::__expand_cast_from(scope, lhs);
-                        let rhs = <Line<half::f16> as Cast>::__expand_cast_from(scope, rhs);
+                        let lhs = <Line<f16> as Cast>::__expand_cast_from(scope, lhs);
+                        let rhs = <Line<f16> as Cast>::__expand_cast_from(scope, rhs);
                         let out = Powf::__expand_powf(scope, lhs, rhs);
                         return <Line<N> as Cast>::__expand_cast_from(scope, out);
                     }
                     cubecl::ir::FloatKind::BF16 => {
-                        let lhs = <Line<half::bf16> as Cast>::__expand_cast_from(scope, lhs);
-                        let rhs = <Line<half::bf16> as Cast>::__expand_cast_from(scope, rhs);
+                        let lhs = <Line<bf16> as Cast>::__expand_cast_from(scope, lhs);
+                        let rhs = <Line<bf16> as Cast>::__expand_cast_from(scope, rhs);
                         let out = Powf::__expand_powf(scope, lhs, rhs);
                         return <Line<N> as Cast>::__expand_cast_from(scope, out);
                     }
@@ -191,9 +192,10 @@ pub(crate) fn launch_binop<R: CubeRuntime, O: BinaryOpFamily>(
 
     let client = lhs.client.clone();
     let num_elems = shape_out.num_elements();
+    let working_units = num_elems / line_size as usize;
 
-    let cube_dim = CubeDim::default();
-    let cube_count = calculate_cube_count_elemwise(num_elems / line_size as usize, cube_dim);
+    let cube_dim = CubeDim::new(&lhs.client, working_units);
+    let cube_count = calculate_cube_count_elemwise(&lhs.client, working_units, cube_dim);
 
     unsafe {
         if lhs.can_mut_broadcast(&rhs) {
@@ -252,8 +254,9 @@ pub(crate) fn launch_scalar_binop<R: CubeRuntime, O: BinaryOpFamily>(
     let num_elems = tensor.shape.num_elements();
     let dtype = tensor.dtype;
 
-    let cube_dim = CubeDim::default();
-    let cube_count = calculate_cube_count_elemwise(num_elems / line_size as usize, cube_dim);
+    let working_units = num_elems / line_size as usize;
+    let cube_dim = CubeDim::new(&tensor.client, working_units);
+    let cube_count = calculate_cube_count_elemwise(&tensor.client, working_units, cube_dim);
 
     unsafe {
         if tensor.can_mut() && tensor.is_contiguous_buffer() {
@@ -280,7 +283,7 @@ pub(crate) fn launch_scalar_binop<R: CubeRuntime, O: BinaryOpFamily>(
             kernel_scalar_binop::launch_unchecked::<O, R>(
                 &client,
                 cube_count,
-                CubeDim::default(),
+                cube_dim,
                 linear_view(&tensor, line_size),
                 scalar,
                 linear_view(&output, line_size),

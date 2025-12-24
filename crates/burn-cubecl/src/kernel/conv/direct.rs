@@ -2,14 +2,13 @@ use crate::ops::numeric::empty_device_optimized_dtype;
 use crate::{
     CubeRuntime,
     kernel::{
-        conv::div_mod_seq,
         into_contiguous_aligned,
         utils::{linear_view, shape_divmod},
     },
     ops::max_line_size,
     tensor::CubeTensor,
 };
-use burn_tensor::ops::{ConvOptions, conv::calculate_conv_output_sizes};
+use burn_backend::ops::{ConvOptions, conv::calculate_conv_output_sizes};
 use cubecl::std::{CubeOption, CubeOptionExpand, FastDivmod};
 use cubecl::{
     calculate_cube_count_elemwise, prelude::*, std::tensor::layout::linear::LinearView,
@@ -17,7 +16,12 @@ use cubecl::{
 };
 use cubek::convolution::components::ConvSetupError;
 
-use super::im2col::{ConvParam, ConvParamLaunch};
+#[derive(CubeLaunch, CubeType, Clone)]
+pub(crate) struct ConvParam {
+    pub stride: u32,
+    pub dilation: u32,
+    pub padding: i32,
+}
 
 #[derive(CubeLaunch, CubeType)]
 struct Conv2dArgs {
@@ -288,9 +292,9 @@ pub fn conv_direct<R: CubeRuntime, const N: usize>(
 
     let bias = bias.as_ref().map(|b| b.as_tensor_arg(line_size_out));
 
-    let num_elems_output = output.shape.num_elements() / line_size_out as usize;
-    let cube_dim = CubeDim::default();
-    let cube_count = calculate_cube_count_elemwise(num_elems_output, cube_dim);
+    let working_units = output.shape.num_elements() / line_size_out as usize;
+    let cube_dim = CubeDim::new(&input.client, working_units);
+    let cube_count = calculate_cube_count_elemwise(&input.client, working_units, cube_dim);
 
     unsafe {
         direct_conv2d_kernel::launch_unchecked(
@@ -310,4 +314,21 @@ pub fn conv_direct<R: CubeRuntime, const N: usize>(
     }?;
 
     Ok(output)
+}
+
+#[cube]
+pub(crate) fn div_mod_seq(pos: u32, shape: &Sequence<FastDivmod>) -> (u32, Sequence<u32>) {
+    let rank = comptime![shape.len()];
+    let mut offs = pos;
+    let mut out = Sequence::new();
+
+    #[unroll]
+    for i in 0..rank {
+        let dim = comptime![rank - i - 1];
+        let (rem, offs_local) = shape.index(dim).div_mod(offs);
+        out.push(offs_local);
+        offs = rem;
+    }
+
+    (offs, out.rev())
 }

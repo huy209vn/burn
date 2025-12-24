@@ -53,7 +53,7 @@ functionality.
 | [ConvTranspose3d][38]            | ✅             | ✅           |
 | [Cos][39]                        | ✅             | ✅           |
 | [Cosh][40]                       | ✅             | ✅           |
-| [CumSum][41]                     | ❌             | ✅          |
+| [CumSum][41]                     | ✅             | ✅           |
 | [DeformConv][196]                | ❌             | ❌           |
 | [DepthToSpace][42]               | ✅             | ✅           |
 | [DequantizeLinear][43]           | ❌             | ❌           |
@@ -88,7 +88,7 @@ functionality.
 | [HannWindow][72]                 | ❌             | ❌           |
 | [Hardmax][73]                    | ❌             | ❌           |
 | [HardSigmoid][74]                | ✅             | ✅           |
-| [HardSwish][75]                  | ❌             | ❌           |
+| [HardSwish][75]                  | ✅             | ✅           |
 | [Identity][76]                   | ✅             | ✅           |
 | [If][77]                         | ❌             | ✅           |
 | [Im][78]                         | ❌             | ❌           |

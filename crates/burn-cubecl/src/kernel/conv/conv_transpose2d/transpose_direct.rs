@@ -7,7 +7,7 @@ use crate::{
     },
     tensor::CubeTensor,
 };
-use burn_tensor::{Shape, ops::ConvTransposeOptions};
+use burn_backend::{Shape, ops::ConvTransposeOptions};
 use cubecl::{calculate_cube_count_elemwise, prelude::*};
 use cubek::convolution::components::ConvSetupError;
 
@@ -170,8 +170,9 @@ pub fn conv_transpose2d_direct<R: CubeRuntime>(
         }
     };
 
-    let cube_dim = CubeDim::default();
-    let cube_count = calculate_cube_count_elemwise(output.shape.num_elements(), cube_dim);
+    let num_elems = output.shape.num_elements();
+    let cube_dim = CubeDim::new(&input.client, num_elems);
+    let cube_count = calculate_cube_count_elemwise(&input.client, num_elems, cube_dim);
 
     conv_transpose2d_direct_kernel::launch(
         &input.client,

@@ -1,14 +1,17 @@
 //! Tensor shape definition.
 
+use super::indexing::ravel_index;
+use super::{AsIndex, Slice, SliceArg};
+use alloc::string::ToString;
+use alloc::vec;
 use alloc::vec::Vec;
+use core::fmt::{Debug, Display, Formatter};
+use core::str::FromStr;
 use core::{
     ops::{Deref, DerefMut, Index, IndexMut, Range},
     slice::{Iter, IterMut, SliceIndex},
 };
 use serde::{Deserialize, Serialize};
-
-use super::indexing::ravel_index;
-use super::{AsIndex, Slice, SliceArg};
 
 /// Shape of a tensor.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -77,6 +80,58 @@ impl Shape {
     pub fn flatten(mut self) -> Self {
         self.dims = [self.num_elements()].into();
         self
+    }
+
+    /// Flatten the shape along a given range of dimensions.
+    ///
+    /// This function collapses the specified range of dimensions into a single dimension,
+    /// effectively flattening the tensor in that range.
+    ///
+    /// # Arguments
+    ///
+    /// - `start_dim`: The starting dimension of the range to be flattened,
+    ///   supports negative indexing.
+    /// - `end_dim`: The ending dimension of the range to be flattened (inclusive),
+    ///   supports negative indexing.
+    ///
+    /// # Returns
+    ///
+    /// A new `Shape` instance with the specified range of dimensions flattened.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use burn_std::Shape;
+    ///
+    /// fn example() {
+    ///     let shape = Shape::new([2, 3, 4]);
+    ///
+    ///     let flattened = shape.flatten_dims(1, 2);
+    ///     println!("{flattened}");
+    ///     // [2, 12]
+    /// }
+    /// ```
+    pub fn flatten_dims(self, start_dim: impl AsIndex, end_dim: impl AsIndex) -> Self {
+        let rank = self.rank();
+        let start = start_dim.expect_dim_index(rank);
+        let end = end_dim.expect_dim_index(rank);
+
+        assert!(
+            start <= end,
+            "start_dim ({start}) must be <= than end_dim ({end})"
+        );
+
+        let existing = self.dims;
+
+        let flattened_size = existing[start..=end].iter().product();
+
+        let new_rank = rank - (end - start);
+        let mut dims = vec![0; new_rank];
+        dims[..start].copy_from_slice(&existing[..start]);
+        dims[start] = flattened_size;
+        dims[start + 1..].copy_from_slice(&existing[end + 1..]);
+
+        Self { dims }
     }
 
     /// Compute the ravel index for the given coordinates.
@@ -160,11 +215,11 @@ impl Shape {
     /// - [`Shape::into_ranges`] - Convert to full covering ranges
     ///
     /// [`s!`]: crate::s!
-    pub fn into_slices<const D: usize, S>(self, slices: S) -> [Slice; D]
+    pub fn into_slices<S>(self, slices: S) -> Vec<Slice>
     where
-        S: SliceArg<D>,
+        S: SliceArg,
     {
-        slices.into_slices(self)
+        slices.into_slices(&self)
     }
 
     /// Construct a vector of the dims.
@@ -442,6 +497,58 @@ pub fn calculate_matmul_output(lhs: &Shape, rhs: &Shape) -> Result<Shape, ShapeE
     Ok(shape)
 }
 
+impl Display for Shape {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        self.dims.fmt(f)
+    }
+}
+
+impl FromStr for Shape {
+    type Err = crate::ExpressionError;
+
+    fn from_str(source: &str) -> Result<Self, Self::Err> {
+        let mut s = source.trim();
+
+        const DELIMS: [(&str, &str); 2] = [("[", "]"), ("(", ")")];
+
+        for (open, close) in DELIMS {
+            if let Some(p) = s.strip_prefix(open) {
+                if let Some(p) = p.strip_suffix(close) {
+                    s = p.trim();
+                    break;
+                } else {
+                    return Err(crate::ExpressionError::ParseError {
+                        message: "Unbalanced delimiters".to_string(),
+                        source: source.to_string(),
+                    });
+                }
+            }
+        }
+
+        if s.is_empty() {
+            return Ok(Shape::new([]));
+        }
+
+        let dims =
+            s.split(',')
+                .map(|dim_str| {
+                    dim_str.trim().parse::<usize>().map_err(|_| {
+                        crate::ExpressionError::ParseError {
+                            message: "Unable to parse shape".to_string(),
+                            source: source.to_string(),
+                        }
+                    })
+                })
+                .collect::<Result<Vec<usize>, crate::ExpressionError>>()?;
+
+        if dims.is_empty() {
+            unreachable!("Split should have returned at least one element");
+        }
+
+        Ok(Shape { dims })
+    }
+}
+
 impl IntoIterator for Shape {
     type Item = usize;
     type IntoIter = alloc::vec::IntoIter<Self::Item>;
@@ -557,7 +664,83 @@ impl From<Shape> for Vec<usize> {
 mod tests {
     use super::*;
     use crate::s;
+    use alloc::string::ToString;
     use alloc::vec;
+
+    #[test]
+    fn test_shape_to_str() {
+        let shape = Shape::new([2, 3, 4, 5]);
+        assert_eq!(shape.to_string(), "[2, 3, 4, 5]");
+    }
+
+    #[test]
+    fn test_shape_from_str() {
+        assert_eq!(
+            "[2, 3, 4, 5]".parse::<Shape>().unwrap(),
+            Shape::new([2, 3, 4, 5])
+        );
+        assert_eq!(
+            "(2, 3, 4, 5)".parse::<Shape>().unwrap(),
+            Shape::new([2, 3, 4, 5])
+        );
+        assert_eq!(
+            "2, 3, 4, 5".parse::<Shape>().unwrap(),
+            Shape::new([2, 3, 4, 5])
+        );
+
+        assert_eq!("[2]".parse::<Shape>().unwrap(), Shape::new([2]));
+        assert_eq!("(2)".parse::<Shape>().unwrap(), Shape::new([2]));
+        assert_eq!("2".parse::<Shape>().unwrap(), Shape::new([2]));
+
+        assert_eq!("[]".parse::<Shape>().unwrap(), Shape::new([]));
+        assert_eq!("".parse::<Shape>().unwrap(), Shape::new([]));
+
+        assert_eq!(
+            "[".parse::<Shape>(),
+            Err(crate::ExpressionError::ParseError {
+                message: "Unbalanced delimiters".to_string(),
+                source: "[".to_string()
+            })
+        );
+
+        assert_eq!(
+            "[[1]".parse::<Shape>(),
+            Err(crate::ExpressionError::ParseError {
+                message: "Unable to parse shape".to_string(),
+                source: "[[1]".to_string()
+            })
+        );
+        assert_eq!(
+            "[[1]]".parse::<Shape>(),
+            Err(crate::ExpressionError::ParseError {
+                message: "Unable to parse shape".to_string(),
+                source: "[[1]]".to_string()
+            })
+        );
+        assert_eq!(
+            "[1)".parse::<Shape>(),
+            Err(crate::ExpressionError::ParseError {
+                message: "Unbalanced delimiters".to_string(),
+                source: "[1)".to_string()
+            })
+        );
+
+        assert_eq!(
+            "]".parse::<Shape>(),
+            Err(crate::ExpressionError::ParseError {
+                message: "Unable to parse shape".to_string(),
+                source: "]".to_string()
+            })
+        );
+
+        assert_eq!(
+            "[a]".parse::<Shape>(),
+            Err(crate::ExpressionError::ParseError {
+                message: "Unable to parse shape".to_string(),
+                source: "[a]".to_string()
+            })
+        );
+    }
 
     #[test]
     fn num_dims_and_rank() {
@@ -1135,5 +1318,12 @@ mod tests {
                 right: reshaped
             })
         );
+    }
+
+    #[test]
+    fn test_flatten_dims() {
+        let shape = Shape::new([2, 3, 4, 5]);
+        let flattened = shape.flatten_dims(-2, 3);
+        assert_eq!(flattened, Shape::new([2, 3, 20]));
     }
 }

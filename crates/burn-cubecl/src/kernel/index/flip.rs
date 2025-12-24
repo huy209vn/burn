@@ -1,7 +1,7 @@
 use crate::{
     CubeRuntime, kernel::into_contiguous, ops::numeric::empty_device_dtype, tensor::CubeTensor,
 };
-use burn_tensor::DType;
+use burn_backend::DType;
 use cubecl::std::scalar::InputScalar;
 use cubecl::{calculate_cube_count_elemwise, prelude::*};
 
@@ -68,8 +68,9 @@ pub(crate) fn flip_on_output<R: CubeRuntime>(
         });
     }
 
-    let cube_dim = CubeDim::default();
-    let cube_count = calculate_cube_count_elemwise(output.shape.num_elements(), cube_dim);
+    let num_elements = output.shape.num_elements();
+    let cube_dim = CubeDim::new(&tensor.client, num_elements);
+    let cube_count = calculate_cube_count_elemwise(&tensor.client, num_elements, cube_dim);
 
     unsafe {
         flip_kernel::launch_unchecked(

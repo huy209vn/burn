@@ -10,10 +10,7 @@ use rand::RngCore;
 use crate::distribution::Distribution;
 use crate::element::{Element, ElementConversion};
 use burn_std::tensor::DType;
-use burn_std::tensor::quantization::{
-    QuantLevel, QuantMode, QuantScheme, QuantValue, QuantizedBytes,
-};
-use burn_std::{Bytes, bf16, f16};
+use burn_std::{Bytes, QuantLevel, QuantMode, QuantScheme, QuantValue, QuantizedBytes, bf16, f16};
 
 /// Data structure for tensors.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -177,6 +174,7 @@ impl TensorData {
             Ok(elems) => return Ok(elems),
             Err(bytes) => bytes,
         };
+
         // The bytes might have been deserialized and allocated with a different align.
         // In that case, we have to memcopy the data into a new vector, more suitably allocated
         Ok(bytemuck::checked::try_cast_slice(me.as_bytes())

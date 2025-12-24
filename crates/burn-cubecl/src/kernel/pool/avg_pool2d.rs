@@ -7,7 +7,7 @@ use crate::{
     ops::{max_line_size, numeric::empty_device_dtype, permute_nchw_to_nhwc, permute_nhwc_to_nchw},
     tensor::CubeTensor,
 };
-use burn_tensor::{Shape, ops::conv::calculate_pool_output_size};
+use burn_backend::{Shape, ops::conv::calculate_pool_output_size};
 use cubecl::prelude::*;
 use cubecl::{CubeDim, calculate_cube_count_elemwise, prelude::ScalarArg};
 
@@ -126,9 +126,9 @@ pub(crate) fn avg_pool2d<R: CubeRuntime>(
     let shape_out = Shape::new([batch_size, size_0, size_1, channels]);
     let output = empty_device_dtype(x.client.clone(), x.device.clone(), shape_out, x.dtype);
 
-    let cube_dim = CubeDim::default();
-    let cube_count =
-        calculate_cube_count_elemwise(output.shape.num_elements() / line_size as usize, cube_dim);
+    let working_units = output.shape.num_elements() / line_size as usize;
+    let cube_dim = CubeDim::new(&x.client, working_units);
+    let cube_count = calculate_cube_count_elemwise(&x.client, working_units, cube_dim);
 
     pool2d_direct::launch::<AvgPoolStrategy, R>(
         &x.client,

@@ -292,12 +292,22 @@ impl BurnGraph {
     fn register_burnpack_embed(&mut self, file: PathBuf) {
         self.imports.register("burn_store::BurnpackStore");
         self.imports.register("burn_store::ModuleSnapshot");
-        self.imports.register("burn::tensor::Bytes");
 
+        // Get file size to create properly-sized aligned wrapper
+        let file_size = std::fs::metadata(&file)
+            .expect("Failed to read burnpack file metadata")
+            .len() as usize;
         let file = file.to_str().unwrap();
+
         self.default = Some(quote! {
             _blank_!();
-            static EMBEDDED_STATES: &[u8] = include_bytes!(#file);
+            // Align embedded data to 256-byte boundary to match burnpack's internal alignment.
+            // This ensures tensor data remains properly aligned for zero-copy loading,
+            // regardless of where the linker places the static data in the binary.
+            #[repr(C, align(256))]
+            struct Aligned256([u8; #file_size]);
+            static ALIGNED_DATA: Aligned256 = Aligned256(*include_bytes!(#file));
+            static EMBEDDED_STATES: &[u8] = &ALIGNED_DATA.0;
             _blank_!();
             impl<B: Backend> Default for Model<B> {
                 fn default() -> Self {
@@ -306,16 +316,18 @@ impl BurnGraph {
             }
             _blank_!();
             impl<B: Backend> Model<B> {
-                /// Load model weights from embedded burnpack data.
+                /// Load model weights from embedded burnpack data (zero-copy at store level).
                 ///
-                /// Note: This currently copies the embedded data to the heap. A future PR will
-                /// implement zero-copy loading. See ZERO_COPY_IMPLEMENTATION.md in burn-store.
+                /// The embedded data stays in the binary's .rodata section without heap allocation.
+                /// Tensor data is sliced directly from the static bytes.
+                ///
+                /// Note: Some backends (e.g., NdArray) may still copy data internally.
+                /// See <https://github.com/tracel-ai/burn/issues/4153> for true backend zero-copy.
                 ///
                 /// See <https://github.com/tracel-ai/burn/issues/4123>
                 pub fn from_embedded(device: &B::Device) -> Self {
                     let mut model = Self::new(device);
-                    let bytes = Bytes::from_bytes_vec(EMBEDDED_STATES.to_vec());
-                    let mut store = BurnpackStore::from_bytes(Some(bytes));
+                    let mut store = BurnpackStore::from_static(EMBEDDED_STATES);
                     model.load_from(&mut store).expect("Failed to load embedded burnpack");
                     model
                 }

@@ -2,21 +2,18 @@ use super::optimization::MatmulOptimizationTuneArg;
 use crate::{
     CubeFusionHandle,
     engine::trace::TuneOutput,
-    optim::matmul::FusedMatmulSelector,
+    optim::matmul::{AcceleratedTileKind, FusedMatmulSelector},
     tune::{TuneContext, TuneInput},
 };
 use burn_fusion::stream::Context;
-use burn_tensor::DType;
+use burn_std::DType;
 use cubecl::{
     AutotuneKey, CubeElement, CubeTuneId, Runtime,
     tune::{LocalTuner, Tunable, TunableSet, TuneGroup, local_tuner},
 };
 use cubek::matmul::{
-    AcceleratedTileKind,
-    components::MatmulKind,
-    tune_key::{
-        MatmulAutotuneKey, MatmulElemType, MatmulGlobalScale, should_tune_double_buffering,
-    },
+    definition::{MatmulElemType, MatmulKind},
+    launch::{MatmulAutotuneKey, MatmulGlobalScale, should_tune_double_buffering},
 };
 use serde::{Deserialize, Serialize};
 

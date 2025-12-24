@@ -1,8 +1,8 @@
+use crate::local::all_reduce::AllReduceResult;
 use crate::{
     CollectiveConfig, CollectiveError, PeerId, ReduceOperation,
     local::{
         BroadcastResult, ReduceResult,
-        all_reduce::AllReduceResult,
         server::{FinishResult, Message, RegisterResult},
     },
 };
@@ -125,6 +125,10 @@ impl<B: Backend> LocalCollectiveClient<B> {
     /// # Result
     /// - `Ok(tensor)` if the operation was successful
     /// - `Err(CollectiveError)` on error.
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(level = "trace", skip(self, tensor))
+    )]
     pub fn all_reduce(
         &self,
         id: PeerId,

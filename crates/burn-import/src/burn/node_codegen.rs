@@ -107,6 +107,7 @@ impl_node_codegen_dispatch! {
     Gelu,
     LeakyRelu,
     HardSigmoid,
+    HardSwish,
     Softmax,
     LogSoftmax,
     PRelu,
@@ -154,6 +155,7 @@ impl_node_codegen_dispatch! {
     // Other ops
     Cast,
     Clip,
+    CumSum,
     Dropout,
     Where,
     ArgMax,

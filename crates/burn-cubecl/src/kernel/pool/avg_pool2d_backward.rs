@@ -3,7 +3,7 @@ use crate::{
     ops::{max_line_size, numeric::empty_device_dtype, permute_nchw_to_nhwc, permute_nhwc_to_nchw},
     tensor::CubeTensor,
 };
-use burn_tensor::Shape;
+use burn_backend::Shape;
 use cubecl::{calculate_cube_count_elemwise, prelude::*};
 
 #[derive(CubeLaunch, CubeType)]
@@ -140,9 +140,10 @@ pub(crate) fn avg_pool2d_backward<R: CubeRuntime>(
 
     let out_shape = Shape::new([batches, height, width, channels]);
     let output = empty_device_dtype(x.client.clone(), x.device.clone(), out_shape, x.dtype);
-    let cube_dim = CubeDim::default();
-    let cube_count =
-        calculate_cube_count_elemwise(output.shape.num_elements() / line_size as usize, cube_dim);
+
+    let working_units = output.shape.num_elements() / line_size as usize;
+    let cube_dim = CubeDim::new(&x.client, working_units);
+    let cube_count = calculate_cube_count_elemwise(&x.client, working_units, cube_dim);
 
     unsafe {
         avg_pool2d_backward_kernel::launch_unchecked(

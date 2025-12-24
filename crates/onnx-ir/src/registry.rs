@@ -257,7 +257,7 @@ impl ProcessorRegistry {
         );
         registry.register(
             NodeType::CumSum,
-            Box::new(crate::node::unsupported::UnsupportedProcessor),
+            Box::new(crate::node::cumsum::CumSumProcessor),
         );
 
         // Convolution operations
@@ -575,6 +575,10 @@ impl ProcessorRegistry {
         registry.register(
             NodeType::HardSigmoid,
             Box::new(crate::node::hard_sigmoid::HardSigmoidProcessor),
+        );
+        registry.register(
+            NodeType::HardSwish,
+            Box::new(crate::node::hard_swish::HardSwishProcessor),
         );
         registry.register(
             NodeType::Softmax,
